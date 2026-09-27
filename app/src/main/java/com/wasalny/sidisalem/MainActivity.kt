@@ -153,11 +153,6 @@ class MainActivity : ComponentActivity() {
 fun AppV4() {
     val navController = rememberNavController()
     val context = LocalContext.current
-<<<<<<< HEAD
-    var role by remember { mutableStateOf<String?>(null) }
-    var adminMode by remember { mutableStateOf(false) }
-    var showAdminLogin by remember { mutableStateOf(false) }
-=======
     val scope = rememberCoroutineScope()
     var role by remember { mutableStateOf<String?>(null) }
     var adminMode by remember { mutableStateOf(false) }
@@ -165,7 +160,6 @@ fun AppV4() {
     var showDriverRegistration by remember { mutableStateOf(false) }
     var driverApproved by remember { mutableStateOf<Boolean?>(null) }
     var driverPhone by remember { mutableStateOf("") }
->>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
     var loaded by remember { mutableStateOf(false) }
     var authError by remember { mutableStateOf<String?>(null) }
     var authAttempt by remember { mutableIntStateOf(0) }
@@ -174,20 +168,15 @@ fun AppV4() {
             FirebaseRidesRepository().signInAnonymously()
             val prefs = context.dataStore.data.first()
             role = prefs[stringPreferencesKey("role")]
-<<<<<<< HEAD
-=======
             if (role == "driver") {
                 val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
                 driverApproved = FirebaseRidesRepository().getDriverApproval(uid) ?: false
             }
->>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
             loaded = true
         } catch (e: Exception) {
             authError = e.localizedMessage ?: "تعذر الاتصال بـ Firebase"
         }
     }
-<<<<<<< HEAD
-=======
 
     LaunchedEffect(role) {
         if (role == "driver") {
@@ -198,7 +187,6 @@ fun AppV4() {
             }
         }
     }
->>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
     if (!loaded) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             if (authError == null) {
@@ -230,13 +218,6 @@ fun AppV4() {
                     adminMode = true
                 }
             )
-<<<<<<< HEAD
-        } else if (role == null) {
-            WelcomeV4(
-                onSelect = { r -> role = r },
-                onAdminRequest = { showAdminLogin = true }
-            )
-=======
         } else if (showDriverRegistration) {
             DriverRegistrationScreen(
                 onBack = { showDriverRegistration = false },
@@ -271,7 +252,6 @@ fun AppV4() {
                     driverPhone = ""
                 }
             )
->>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
         } else {
             Scaffold(bottomBar = { BottomBarV4(navController, role!!) }) { padding ->
                 NavHost(
@@ -375,13 +355,9 @@ fun WelcomeV4(onSelect: (String) -> Unit, onAdminRequest: () -> Unit) {
             color = Color.Gray,
             textAlign = TextAlign.Center
         )
-<<<<<<< HEAD
-        Spacer(Modifier.height(32.dp))
-=======
         Spacer(Modifier.height(24.dp))
         Text("اختر نوع الحساب", fontWeight = FontWeight.Bold, fontSize = 18.sp)
         Spacer(Modifier.height(18.dp))
->>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
         Button(
             onClick = {
                 scope.launch {
@@ -394,15 +370,6 @@ fun WelcomeV4(onSelect: (String) -> Unit, onAdminRequest: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         OutlinedButton(
             onClick = {
-<<<<<<< HEAD
-                scope.launch {
-                    ctx.dataStore.edit { it[stringPreferencesKey("role")] = "driver" }
-                    onSelect("driver")
-                }
-            },
-            modifier = Modifier.fillMaxWidth().height(56.dp)
-        ) { Text("أنا سائق") }
-=======
                 onSelect("driver")
             },
             modifier = Modifier.fillMaxWidth().height(56.dp)
@@ -414,7 +381,6 @@ fun WelcomeV4(onSelect: (String) -> Unit, onAdminRequest: () -> Unit) {
             },
             modifier = Modifier.fillMaxWidth().height(52.dp)
         ) { Text("أنا مشرف") }
->>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
         Spacer(Modifier.height(20.dp))
         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))) {
             Column(Modifier.padding(12.dp)) {
@@ -429,8 +395,6 @@ fun WelcomeV4(onSelect: (String) -> Unit, onAdminRequest: () -> Unit) {
 }
 
 @Composable
-<<<<<<< HEAD
-=======
 fun DriverPendingApprovalScreen(phone: String, onLogout: () -> Unit) {
     Column(
         Modifier.fillMaxSize().padding(24.dp),
@@ -593,7 +557,6 @@ fun DriverRegistrationScreen(
 }
 
 @Composable
->>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
 fun BottomBarV4(nav: NavController, role: String) {
     val items = if (role == "driver") {
         listOf(

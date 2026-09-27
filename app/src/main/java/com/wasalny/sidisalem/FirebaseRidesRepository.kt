@@ -8,10 +8,7 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
-<<<<<<< HEAD
-=======
 import com.google.firebase.firestore.SetOptions
->>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.tasks.await
 import kotlin.math.*
@@ -63,8 +60,6 @@ data class DriverCandidate(
     val updatedAt: Long?
 )
 
-<<<<<<< HEAD
-=======
 data class DriverApplication(
     val uid: String,
     val name: String,
@@ -78,7 +73,6 @@ data class DriverApplication(
     val updatedAt: Long? = null
 )
 
->>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
 class FirebaseRidesRepository(
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance()
 ) {
@@ -131,8 +125,6 @@ class FirebaseRidesRepository(
             ?: error("تعذر إنشاء جلسة Firebase")
     }
 
-<<<<<<< HEAD
-=======
     suspend fun saveUserProfile(uid: String, role: String, name: String, phone: String) {
         val ref = db.collection("users").document(uid)
         val now = FieldValue.serverTimestamp()
@@ -195,7 +187,6 @@ class FirebaseRidesRepository(
         )
     }
 
->>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
     suspend fun ensureDriverProfile(uid: String, name: String) {
         val ref = drivers.document(uid)
         if (!ref.get().await().exists()) {

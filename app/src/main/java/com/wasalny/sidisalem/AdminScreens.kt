@@ -174,10 +174,7 @@ fun AdminPanel(onLogout: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var selectedDriver by remember { mutableStateOf<DriverCandidate?>(null) }
     var savingUid by remember { mutableStateOf<String?>(null) }
-<<<<<<< HEAD
-=======
     var driverDetails by remember { mutableStateOf<DriverApplication?>(null) }
->>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
 
     DisposableEffect(Unit) {
         val registration = repository.listenPendingDrivers(
@@ -215,12 +212,9 @@ fun AdminPanel(onLogout: () -> Unit) {
                                     enabled = savingUid == null,
                                     onClick = {
                                         selectedDriver = driver
-<<<<<<< HEAD
-=======
                                         scope.launch {
                                             driverDetails = repository.getDriverApplication(driver.uid)
                                         }
->>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
                                     }
                                 ) { Text("مراجعة وقبول") }
                                 OutlinedButton(
@@ -250,9 +244,6 @@ fun AdminPanel(onLogout: () -> Unit) {
         AlertDialog(
             onDismissRequest = { if (savingUid == null) selectedDriver = null },
             title = { Text("اعتماد السائق") },
-<<<<<<< HEAD
-            text = { Text("هل تريد اعتماد ${driver.displayName} لاستقبال طلبات الرحلات؟") },
-=======
             text = {
                 Column {
                     Text("هل تريد اعتماد ${driver.displayName} لاستقبال طلبات الرحلات؟")
@@ -269,7 +260,6 @@ fun AdminPanel(onLogout: () -> Unit) {
                     }
                 }
             },
->>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
             confirmButton = {
                 Button(
                     enabled = savingUid == null,
@@ -279,10 +269,7 @@ fun AdminPanel(onLogout: () -> Unit) {
                             try {
                                 repository.setDriverApproval(driver.uid, true)
                                 selectedDriver = null
-<<<<<<< HEAD
-=======
                                 driverDetails = null
->>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
                             } catch (e: Exception) {
                                 error = e.localizedMessage ?: "تعذر اعتماد السائق"
                             } finally {
