@@ -26,4 +26,8 @@
     }
   ],
   "configuration_version": "1"
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)

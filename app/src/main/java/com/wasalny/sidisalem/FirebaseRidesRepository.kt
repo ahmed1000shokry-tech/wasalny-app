@@ -8,6 +8,10 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
+<<<<<<< HEAD
+=======
+import com.google.firebase.firestore.SetOptions
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.tasks.await
 import kotlin.math.*
@@ -59,6 +63,22 @@ data class DriverCandidate(
     val updatedAt: Long?
 )
 
+<<<<<<< HEAD
+=======
+data class DriverApplication(
+    val uid: String,
+    val name: String,
+    val phone: String,
+    val licenseType: String,
+    val vehicleType: String,
+    val idCardImageUrl: String = "",
+    val vehicleImageUrl: String = "",
+    val approved: Boolean = false,
+    val createdAt: Long? = null,
+    val updatedAt: Long? = null
+)
+
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
 class FirebaseRidesRepository(
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance()
 ) {
@@ -111,6 +131,71 @@ class FirebaseRidesRepository(
             ?: error("تعذر إنشاء جلسة Firebase")
     }
 
+<<<<<<< HEAD
+=======
+    suspend fun saveUserProfile(uid: String, role: String, name: String, phone: String) {
+        val ref = db.collection("users").document(uid)
+        val now = FieldValue.serverTimestamp()
+        val payload = mapOf(
+            "uid" to uid,
+            "role" to role,
+            "name" to name,
+            "phone" to phone,
+            "updatedAt" to now
+        )
+        ref.set(payload, SetOptions.merge()).await()
+    }
+
+    suspend fun saveDriverApplication(
+        uid: String,
+        name: String,
+        phone: String,
+        licenseType: String,
+        vehicleType: String,
+        idCardImageUrl: String = "",
+        vehicleImageUrl: String = ""
+    ) {
+        val ref = drivers.document(uid)
+        val existing = ref.get().await()
+        val payload = mutableMapOf<String, Any>(
+            "uid" to uid,
+            "displayName" to name,
+            "phone" to phone,
+            "licenseType" to licenseType,
+            "vehicleType" to vehicleType,
+            "idCardImageUrl" to idCardImageUrl,
+            "vehicleImageUrl" to vehicleImageUrl,
+            "approved" to (existing.getBoolean("approved") ?: false),
+            "available" to false,
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+        if (!existing.exists()) {
+            payload["createdAt"] = FieldValue.serverTimestamp()
+            payload["lat"] = Config.LAT
+            payload["lon"] = Config.LON
+            payload["geohash"] = GeoFireUtils.getGeoHashForLocation(GeoLocation(Config.LAT, Config.LON))
+        }
+        ref.set(payload, SetOptions.merge()).await()
+    }
+
+    suspend fun getDriverApplication(uid: String): DriverApplication? {
+        val snapshot = drivers.document(uid).get().await()
+        if (!snapshot.exists()) return null
+        return DriverApplication(
+            uid = snapshot.id,
+            name = snapshot.getString("displayName") ?: "",
+            phone = snapshot.getString("phone") ?: "",
+            licenseType = snapshot.getString("licenseType") ?: "غير محدد",
+            vehicleType = snapshot.getString("vehicleType") ?: "غير محدد",
+            idCardImageUrl = snapshot.getString("idCardImageUrl") ?: "",
+            vehicleImageUrl = snapshot.getString("vehicleImageUrl") ?: "",
+            approved = snapshot.getBoolean("approved") == true,
+            createdAt = snapshot.getTimestamp("createdAt")?.toDate()?.time,
+            updatedAt = snapshot.getTimestamp("updatedAt")?.toDate()?.time
+        )
+    }
+
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
     suspend fun ensureDriverProfile(uid: String, name: String) {
         val ref = drivers.document(uid)
         if (!ref.get().await().exists()) {

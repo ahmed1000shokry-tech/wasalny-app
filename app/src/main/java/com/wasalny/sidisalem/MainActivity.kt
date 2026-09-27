@@ -153,9 +153,19 @@ class MainActivity : ComponentActivity() {
 fun AppV4() {
     val navController = rememberNavController()
     val context = LocalContext.current
+<<<<<<< HEAD
     var role by remember { mutableStateOf<String?>(null) }
     var adminMode by remember { mutableStateOf(false) }
     var showAdminLogin by remember { mutableStateOf(false) }
+=======
+    val scope = rememberCoroutineScope()
+    var role by remember { mutableStateOf<String?>(null) }
+    var adminMode by remember { mutableStateOf(false) }
+    var showAdminLogin by remember { mutableStateOf(false) }
+    var showDriverRegistration by remember { mutableStateOf(false) }
+    var driverApproved by remember { mutableStateOf<Boolean?>(null) }
+    var driverPhone by remember { mutableStateOf("") }
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
     var loaded by remember { mutableStateOf(false) }
     var authError by remember { mutableStateOf<String?>(null) }
     var authAttempt by remember { mutableIntStateOf(0) }
@@ -164,11 +174,31 @@ fun AppV4() {
             FirebaseRidesRepository().signInAnonymously()
             val prefs = context.dataStore.data.first()
             role = prefs[stringPreferencesKey("role")]
+<<<<<<< HEAD
+=======
+            if (role == "driver") {
+                val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
+                driverApproved = FirebaseRidesRepository().getDriverApproval(uid) ?: false
+            }
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
             loaded = true
         } catch (e: Exception) {
             authError = e.localizedMessage ?: "تعذر الاتصال بـ Firebase"
         }
     }
+<<<<<<< HEAD
+=======
+
+    LaunchedEffect(role) {
+        if (role == "driver") {
+            val uid = FirebaseAuth.getInstance().currentUser?.uid
+            if (uid != null) {
+                driverApproved = FirebaseRidesRepository().getDriverApproval(uid) ?: false
+                driverPhone = getUserPhone(context)
+            }
+        }
+    }
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
     if (!loaded) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             if (authError == null) {
@@ -200,11 +230,48 @@ fun AppV4() {
                     adminMode = true
                 }
             )
+<<<<<<< HEAD
         } else if (role == null) {
             WelcomeV4(
                 onSelect = { r -> role = r },
                 onAdminRequest = { showAdminLogin = true }
             )
+=======
+        } else if (showDriverRegistration) {
+            DriverRegistrationScreen(
+                onBack = { showDriverRegistration = false },
+                onComplete = { selectedRole ->
+                    showDriverRegistration = false
+                    role = selectedRole
+                }
+            )
+        } else if (role == null) {
+            WelcomeV4(
+                onSelect = { r ->
+                    if (r == "driver") {
+                        showDriverRegistration = true
+                    } else {
+                        role = r
+                    }
+                },
+                onAdminRequest = { showAdminLogin = true }
+            )
+        } else if (role == "driver" && driverApproved == false) {
+            DriverPendingApprovalScreen(
+                phone = driverPhone,
+                onLogout = {
+                    scope.launch {
+                        context.dataStore.edit {
+                            it.remove(stringPreferencesKey("role"))
+                        }
+                    }
+                    FirebaseAuth.getInstance().signOut()
+                    role = null
+                    driverApproved = null
+                    driverPhone = ""
+                }
+            )
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
         } else {
             Scaffold(bottomBar = { BottomBarV4(navController, role!!) }) { padding ->
                 NavHost(
@@ -308,7 +375,13 @@ fun WelcomeV4(onSelect: (String) -> Unit, onAdminRequest: () -> Unit) {
             color = Color.Gray,
             textAlign = TextAlign.Center
         )
+<<<<<<< HEAD
         Spacer(Modifier.height(32.dp))
+=======
+        Spacer(Modifier.height(24.dp))
+        Text("اختر نوع الحساب", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Spacer(Modifier.height(18.dp))
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
         Button(
             onClick = {
                 scope.launch {
@@ -321,6 +394,7 @@ fun WelcomeV4(onSelect: (String) -> Unit, onAdminRequest: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         OutlinedButton(
             onClick = {
+<<<<<<< HEAD
                 scope.launch {
                     ctx.dataStore.edit { it[stringPreferencesKey("role")] = "driver" }
                     onSelect("driver")
@@ -328,6 +402,19 @@ fun WelcomeV4(onSelect: (String) -> Unit, onAdminRequest: () -> Unit) {
             },
             modifier = Modifier.fillMaxWidth().height(56.dp)
         ) { Text("أنا سائق") }
+=======
+                onSelect("driver")
+            },
+            modifier = Modifier.fillMaxWidth().height(56.dp)
+        ) { Text("أنا سائق") }
+        Spacer(Modifier.height(12.dp))
+        OutlinedButton(
+            onClick = {
+                onAdminRequest()
+            },
+            modifier = Modifier.fillMaxWidth().height(52.dp)
+        ) { Text("أنا مشرف") }
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
         Spacer(Modifier.height(20.dp))
         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))) {
             Column(Modifier.padding(12.dp)) {
@@ -342,6 +429,171 @@ fun WelcomeV4(onSelect: (String) -> Unit, onAdminRequest: () -> Unit) {
 }
 
 @Composable
+<<<<<<< HEAD
+=======
+fun DriverPendingApprovalScreen(phone: String, onLogout: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("⏳ انتظار اعتماد الإدارة", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "تم تسجيل طلبك بنجاح.\nالرجاء انتظار موافقة الإدارة قبل استقبال طلبات الرحلات.",
+            textAlign = TextAlign.Center,
+            color = Color.Gray
+        )
+        Spacer(Modifier.height(20.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))) {
+            Column(Modifier.padding(16.dp)) {
+                Text("معلومات الطلب", fontWeight = FontWeight.Bold)
+                Text("- رقم الهاتف: ${phone.ifBlank { "غير متوفر" }}")
+                Text("- الحالة: بانتظار الموافقة")
+                Text("- نوع الرخصة: حسب نموذج التسجيل")
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        Button(onClick = onLogout, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+            Text("تسجيل الخروج")
+        }
+    }
+}
+
+@Composable
+fun DriverRegistrationScreen(
+    onBack: () -> Unit,
+    onComplete: (String) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val repository = remember { FirebaseRidesRepository() }
+    var name by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    var licenseType by remember { mutableStateOf("مرخص") }
+    var vehicleType by remember { mutableStateOf("توك توك") }
+    var idCardImageUrl by remember { mutableStateOf("") }
+    var vehicleImageUrl by remember { mutableStateOf("") }
+    var isSubmitting by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        val savedName = getUserName(context)
+        val savedPhone = getUserPhone(context)
+        if (savedName != "مستخدم") name = savedName
+        phone = savedPhone
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(20.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("تسجيل السائق", style = MaterialTheme.typography.headlineSmall)
+        Text("أدخل بياناتك قبل الموافقة. سيتم مراجعة الطلب من الإدارة.", color = Color.Gray)
+
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            label = { Text("الاسم") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        OutlinedTextField(
+            value = phone,
+            onValueChange = { phone = it },
+            label = { Text("رقم الموبايل") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        OutlinedTextField(
+            value = licenseType,
+            onValueChange = { licenseType = it },
+            label = { Text("نوع الرخصة") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        OutlinedTextField(
+            value = vehicleType,
+            onValueChange = { vehicleType = it },
+            label = { Text("نوع المركبة") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        OutlinedTextField(
+            value = idCardImageUrl,
+            onValueChange = { idCardImageUrl = it },
+            label = { Text("رابط صورة البطاقة (اختياري حالياً)") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        OutlinedTextField(
+            value = vehicleImageUrl,
+            onValueChange = { vehicleImageUrl = it },
+            label = { Text("رابط صورة المركبة (اختياري حالياً)") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        if (error != null) {
+            Text(error!!, color = Color(0xFFB3261E))
+        }
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = onBack,
+                modifier = Modifier.weight(1f),
+                enabled = !isSubmitting
+            ) { Text("رجوع") }
+            Button(
+                onClick = {
+                    scope.launch {
+                        try {
+                            isSubmitting = true
+                            val uid = FirebaseAuth.getInstance().currentUser?.uid ?: repository.signInAnonymously()
+                            val safePhone = phone.trim()
+                            if (safePhone.isBlank() || name.trim().isBlank()) {
+                                throw IllegalStateException("الاسم ورقم الهاتف مطلوبان")
+                            }
+                            repository.saveUserProfile(uid, "driver", name.trim(), safePhone)
+                            repository.saveDriverApplication(
+                                uid = uid,
+                                name = name.trim(),
+                                phone = safePhone,
+                                licenseType = licenseType.trim().ifBlank { "مرخص" },
+                                vehicleType = vehicleType.trim().ifBlank { "توك توك" },
+                                idCardImageUrl = idCardImageUrl.trim(),
+                                vehicleImageUrl = vehicleImageUrl.trim()
+                            )
+                            context.dataStore.edit {
+                                it[stringPreferencesKey("role")] = "driver"
+                                it[stringPreferencesKey("user_name")] = name.trim()
+                                it[stringPreferencesKey("user_phone")] = safePhone
+                            }
+                            onComplete("driver")
+                        } catch (e: Exception) {
+                            error = e.localizedMessage ?: "تعذر حفظ بيانات السائق"
+                        } finally {
+                            isSubmitting = false
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f),
+                enabled = !isSubmitting
+            ) {
+                if (isSubmitting) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Text("تسجيل الطلب")
+            }
+        }
+    }
+}
+
+@Composable
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
 fun BottomBarV4(nav: NavController, role: String) {
     val items = if (role == "driver") {
         listOf(

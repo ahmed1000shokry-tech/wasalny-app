@@ -174,6 +174,10 @@ fun AdminPanel(onLogout: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var selectedDriver by remember { mutableStateOf<DriverCandidate?>(null) }
     var savingUid by remember { mutableStateOf<String?>(null) }
+<<<<<<< HEAD
+=======
+    var driverDetails by remember { mutableStateOf<DriverApplication?>(null) }
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
 
     DisposableEffect(Unit) {
         val registration = repository.listenPendingDrivers(
@@ -211,6 +215,12 @@ fun AdminPanel(onLogout: () -> Unit) {
                                     enabled = savingUid == null,
                                     onClick = {
                                         selectedDriver = driver
+<<<<<<< HEAD
+=======
+                                        scope.launch {
+                                            driverDetails = repository.getDriverApplication(driver.uid)
+                                        }
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
                                     }
                                 ) { Text("مراجعة وقبول") }
                                 OutlinedButton(
@@ -240,7 +250,26 @@ fun AdminPanel(onLogout: () -> Unit) {
         AlertDialog(
             onDismissRequest = { if (savingUid == null) selectedDriver = null },
             title = { Text("اعتماد السائق") },
+<<<<<<< HEAD
             text = { Text("هل تريد اعتماد ${driver.displayName} لاستقبال طلبات الرحلات؟") },
+=======
+            text = {
+                Column {
+                    Text("هل تريد اعتماد ${driver.displayName} لاستقبال طلبات الرحلات؟")
+                    Spacer(Modifier.size(8.dp))
+                    Text("الاسم: ${driverDetails?.name ?: driver.displayName}", color = Color.Gray)
+                    Text("رقم الهاتف: ${driverDetails?.phone ?: "غير متوفر"}", color = Color.Gray)
+                    Text("نوع الرخصة: ${driverDetails?.licenseType ?: "غير محدد"}", color = Color.Gray)
+                    Text("نوع المركبة: ${driverDetails?.vehicleType ?: "غير محدد"}", color = Color.Gray)
+                    if (!driverDetails?.idCardImageUrl.isNullOrBlank()) {
+                        Text("بطاقة: ${driverDetails!!.idCardImageUrl}", color = Color.Gray)
+                    }
+                    if (!driverDetails?.vehicleImageUrl.isNullOrBlank()) {
+                        Text("مركبة: ${driverDetails!!.vehicleImageUrl}", color = Color.Gray)
+                    }
+                }
+            },
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
             confirmButton = {
                 Button(
                     enabled = savingUid == null,
@@ -250,6 +279,10 @@ fun AdminPanel(onLogout: () -> Unit) {
                             try {
                                 repository.setDriverApproval(driver.uid, true)
                                 selectedDriver = null
+<<<<<<< HEAD
+=======
+                                driverDetails = null
+>>>>>>> ae34de4 (Finalize Wasalny app setup with Firebase config and role flows)
                             } catch (e: Exception) {
                                 error = e.localizedMessage ?: "تعذر اعتماد السائق"
                             } finally {
