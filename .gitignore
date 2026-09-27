@@ -1,0 +1,14 @@
+# Local Gradle and Android build output
+.gradle/
+build/
+**/build/
+local.properties
+keystore.properties
+*.jks
+
+# IDE files
+.idea/
+*.iml
+
+# Local Firebase CLI state
+.firebase/
