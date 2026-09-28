@@ -32,27 +32,81 @@ service cloud.firestore {
       allow list, create, update, delete: if false;
     }
 
+    match /users/{userId} {
+      allow get: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['uid', 'role', 'name', 'phone', 'fcmToken', 'updatedAt'])
+        && request.resource.data.uid == userId
+        && request.resource.data.role in ['customer', 'driver']
+        && request.resource.data.name is string
+        && request.resource.data.phone is string
+        && (!request.resource.data.keys().hasAny(['fcmToken']) || request.resource.data.fcmToken is string)
+        && request.resource.data.updatedAt == request.time;
+      allow update: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['uid', 'role', 'name', 'phone', 'fcmToken', 'updatedAt'])
+        && request.resource.data.uid == userId
+        && request.resource.data.role in ['customer', 'driver']
+        && request.resource.data.name is string
+        && request.resource.data.phone is string
+        && (!request.resource.data.keys().hasAny(['fcmToken']) || request.resource.data.fcmToken is string)
+        && request.resource.data.updatedAt == request.time;
+      allow list, delete: if false;
+    }
+
     match /drivers/{driverId} {
       allow get: if signedIn() && (
         request.auth.uid == driverId || resource.data.approved == true || isAdmin()
       );
       allow list: if signedIn() && (resource.data.approved == true || isAdmin());
 
+      // New driver application.
       allow create: if signedIn()
         && request.auth.uid == driverId
         && request.resource.data.keys().hasOnly([
-          'uid', 'displayName', 'approved', 'available', 'lat', 'lon', 'geohash', 'updatedAt'
+          'uid', 'displayName', 'phone', 'licenseType', 'vehicleType',
+          'idCardImageUrl', 'vehicleImageUrl', 'approved', 'available',
+          'lat', 'lon', 'geohash', 'createdAt', 'updatedAt'
         ])
         && request.resource.data.uid == driverId
+        && request.resource.data.displayName is string
+        && request.resource.data.phone is string
+        && request.resource.data.licenseType is string
+        && request.resource.data.vehicleType is string
+        && request.resource.data.idCardImageUrl is string
+        && request.resource.data.vehicleImageUrl is string
         && request.resource.data.approved == false
         && request.resource.data.available == false
-          && request.resource.data.lat is number
-          && request.resource.data.lon is number
-          && request.resource.data.geohash is string
+        && request.resource.data.lat is number
+        && request.resource.data.lon is number
+        && request.resource.data.geohash is string
+        && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
 
       allow update: if signedIn()
         && (
+          // Pending driver can edit only their application fields.
+          (
+            request.auth.uid == driverId
+            && resource.data.approved == false
+            && request.resource.data.approved == false
+            && request.resource.data.available == false
+            && request.resource.data.uid == resource.data.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'displayName', 'phone', 'licenseType', 'vehicleType',
+              'idCardImageUrl', 'vehicleImageUrl', 'updatedAt'
+            ])
+            && request.resource.data.displayName is string
+            && request.resource.data.phone is string
+            && request.resource.data.licenseType is string
+            && request.resource.data.vehicleType is string
+            && request.resource.data.idCardImageUrl is string
+            && request.resource.data.vehicleImageUrl is string
+            && request.resource.data.updatedAt == request.time
+          )
+          ||
+          // Approved driver can update only operational/location fields.
           (
             request.auth.uid == driverId
             && resource.data.approved == true
@@ -67,7 +121,9 @@ service cloud.firestore {
             && request.resource.data.geohash is string
             && request.resource.data.updatedAt == request.time
           )
-          || (
+          ||
+          // Admin can approve/revoke, but cannot leave an unapproved driver online.
+          (
             isAdmin()
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
               'approved', 'available', 'updatedAt'
@@ -81,14 +137,7 @@ service cloud.firestore {
       match /requests/{rideId} {
         allow get, list: if signedIn() && request.auth.uid == driverId;
 
-        allow create: if ownsRide(rideId)
-          && approvedDriver(driverId)
-          && request.resource.data.rideId == rideId
-          && request.resource.data.status == 'searching'
-          && request.resource.data.keys().hasOnly([
-            'rideId', 'customerId', 'fromAddress', 'toAddress', 'fromLat', 'fromLon',
-            'distanceKm', 'femaleMode', 'withLuggage', 'radiusMeters', 'status', 'createdAt'
-          ]);
+        allow create: if false; // الطلبات تُنشأ فقط عبر Cloud Function (Admin SDK)
 
         allow update: if signedIn()
           && ownsRide(rideId)
@@ -102,75 +151,114 @@ service cloud.firestore {
     match /rides/{rideId} {
       allow create: if signedIn()
         && request.resource.data.customerId == request.auth.uid
-        && request.resource.data.status == 'searching'
+        && request.resource.data.status in ['searching', 'scheduled']
         && request.resource.data.searchRadiusMeters == 500
         && request.resource.data.searchStage == 0
         && request.resource.data.invitedDriverIds is list
         && request.resource.data.createdAt == request.time
         && request.resource.data.keys().hasAll([
           'customerId', 'customerName', 'fromAddress', 'toAddress', 'fromLat', 'fromLon',
-          'toLat', 'toLon', 'distanceKm', 'femaleMode', 'withLuggage', 'status',
-          'searchRadiusMeters', 'searchStage', 'invitedDriverIds', 'createdAt', 'updatedAt'
+          'toLat', 'toLon', 'distanceKm', 'femaleMode', 'withLuggage', 'bookingType', 'status',
+          'searchRadiusMeters', 'searchStage', 'invitedDriverIds', 'scheduledAt', 'createdAt', 'updatedAt'
         ])
         && request.resource.data.keys().hasOnly([
           'customerId', 'customerName', 'fromAddress', 'toAddress', 'fromLat', 'fromLon',
-          'toLat', 'toLon', 'distanceKm', 'femaleMode', 'withLuggage', 'status',
-          'searchRadiusMeters', 'searchStage', 'invitedDriverIds', 'createdAt', 'updatedAt'
-        ]);
+          'toLat', 'toLon', 'distanceKm', 'femaleMode', 'withLuggage', 'bookingType', 'status',
+          'searchRadiusMeters', 'searchStage', 'invitedDriverIds', 'scheduledAt', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.bookingType in ['now', 'school']
+        && ((request.resource.data.bookingType == 'now' && request.resource.data.status == 'searching' && request.resource.data.scheduledAt == null) || (request.resource.data.bookingType == 'school' && request.resource.data.status == 'scheduled' && request.resource.data.scheduledAt is timestamp));
 
       allow get: if signedIn() && (
         resource.data.customerId == request.auth.uid
         || (approvedDriver(request.auth.uid)
           && resource.data.status == 'searching'
           && hasRideRequest(request.auth.uid, rideId))
-        || (resource.data.status == 'accepted'
+        || (resource.data.status in ['accepted', 'driver_arriving', 'driver_arrived', 'in_progress']
           && resource.data.selectedDriverId == request.auth.uid)
       );
 
       allow list: if signedIn() && resource.data.customerId == request.auth.uid;
 
       allow update: if signedIn()
-        && resource.data.customerId == request.auth.uid
         && (
           (
-            resource.data.status == 'searching'
-            && request.resource.data.status == 'searching'
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'searchRadiusMeters', 'searchStage', 'invitedDriverIds', 'updatedAt'
-            ])
-            && request.resource.data.searchRadiusMeters in [500, 1000, 2000, 5000]
-            && request.resource.data.searchStage in [0, 1, 2, 3]
-          )
-          || (
-            resource.data.status == 'searching'
+            resource.data.customerId == request.auth.uid
+            && resource.data.status in ['searching', 'scheduled']
             && request.resource.data.status in ['offered', 'no_drivers', 'cancelled']
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
           )
           || (
-            resource.data.status == 'offered'
+            resource.data.customerId == request.auth.uid
+            && resource.data.status == 'offered'
             && request.resource.data.status == 'cancelled'
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
           )
           || (
-            resource.data.status in ['searching', 'offered']
+            resource.data.customerId == request.auth.uid
+            && resource.data.status in ['searching', 'offered']
             && request.resource.data.status == 'accepted'
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'status', 'selectedDriverId', 'selectedOfferId', 'updatedAt'
+              'status', 'selectedDriverId', 'selectedOfferId', 'selectedPrice', 'updatedAt'
             ])
             && request.resource.data.selectedDriverId == request.resource.data.selectedOfferId
+            && request.resource.data.selectedPrice is int
+            && request.resource.data.selectedPrice >= 1
             && exists(/databases/$(database)/documents/rides/$(rideId)/offers/$(request.resource.data.selectedOfferId))
             && getAfter(/databases/$(database)/documents/rides/$(rideId)/offers/$(request.resource.data.selectedOfferId)).data.status == 'selected'
           )
+          || (
+            resource.data.selectedDriverId == request.auth.uid
+            && resource.data.status in ['accepted', 'driver_arriving', 'driver_arrived', 'in_progress']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+            && (
+              (resource.data.status == 'accepted' && request.resource.data.status == 'driver_arriving')
+              || (resource.data.status == 'driver_arriving' && request.resource.data.status == 'driver_arrived')
+              || (resource.data.status == 'driver_arrived' && request.resource.data.status == 'in_progress')
+              || (resource.data.status == 'in_progress' && request.resource.data.status in ['completed', 'cancelled'])
+              || (resource.data.status in ['accepted', 'driver_arriving', 'driver_arrived'] && request.resource.data.status == 'cancelled')
+            )
+          )
+          || (
+            resource.data.customerId == request.auth.uid
+            && resource.data.status in ['accepted', 'driver_arriving', 'driver_arrived']
+            && request.resource.data.status == 'cancelled'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
         );
+
+      match /ratings/{raterId} {
+        allow get: if signedIn() && (
+          ownsRide(rideId) ||
+          get(/databases/$(database)/documents/rides/$(rideId)).data.selectedDriverId == request.auth.uid
+        );
+        allow create: if signedIn()
+          && request.auth.uid == raterId
+          && get(/databases/$(database)/documents/rides/$(rideId)).data.status == 'completed'
+          && (
+            get(/databases/$(database)/documents/rides/$(rideId)).data.customerId == request.auth.uid
+            || get(/databases/$(database)/documents/rides/$(rideId)).data.selectedDriverId == request.auth.uid
+          )
+          && request.resource.data.keys().hasOnly(['raterId', 'stars', 'comment', 'createdAt'])
+          && request.resource.data.raterId == request.auth.uid
+          && request.resource.data.stars is int
+          && request.resource.data.stars >= 1
+          && request.resource.data.stars <= 5
+          && request.resource.data.comment is string
+          && request.resource.data.comment.size() <= 300
+          && request.resource.data.createdAt == request.time;
+        allow update, delete, list: if false;
+      }
 
       match /private/{privateId} {
         allow create: if signedIn()
           && ownsRide(rideId)
           && privateId == 'contact'
-          && request.resource.data.keys().hasOnly(['customerPhone']);
+          && request.resource.data.keys().hasOnly(['customerPhone'])
+          && request.resource.data.customerPhone is string;
         allow get: if signedIn() && (
           ownsRide(rideId)
-          || (get(/databases/$(database)/documents/rides/$(rideId)).data.status == 'accepted'
+          || (get(/databases/$(database)/documents/rides/$(rideId)).data.status in ['accepted', 'driver_arriving', 'driver_arrived', 'in_progress']
             && get(/databases/$(database)/documents/rides/$(rideId)).data.selectedDriverId == request.auth.uid)
         );
         allow list, update, delete: if false;

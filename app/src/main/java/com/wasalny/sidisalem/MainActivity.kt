@@ -1,11 +1,14 @@
 package com.wasalny.sidisalem
 
 import android.Manifest
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Geocoder
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -45,6 +48,7 @@ import androidx.navigation.navArgument
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.messaging.FirebaseMessaging
 import com.google.android.gms.tasks.CancellationTokenSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -64,9 +68,10 @@ import org.osmdroid.views.overlay.Polyline
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
+import java.util.Calendar
 import kotlin.math.*
 
-val Context.dataStore by preferencesDataStore(name = "wasalny_v4")
+val Context.dataStore by preferencesDataStore(name = "wasalny_v5")
 
 object Config {
     const val LAT = 31.27133
@@ -154,166 +159,96 @@ fun AppV4() {
     val navController = rememberNavController()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var firebaseUser by remember { mutableStateOf(FirebaseAuth.getInstance().currentUser) }
     var role by remember { mutableStateOf<String?>(null) }
     var adminMode by remember { mutableStateOf(false) }
     var showAdminLogin by remember { mutableStateOf(false) }
     var showDriverRegistration by remember { mutableStateOf(false) }
+    var showCustomerProfile by remember { mutableStateOf(false) }
     var driverApproved by remember { mutableStateOf<Boolean?>(null) }
     var driverPhone by remember { mutableStateOf("") }
-    var loaded by remember { mutableStateOf(false) }
-    var authError by remember { mutableStateOf<String?>(null) }
-    var authAttempt by remember { mutableIntStateOf(0) }
-    LaunchedEffect(authAttempt) {
-        try {
-            FirebaseRidesRepository().signInAnonymously()
-            val prefs = context.dataStore.data.first()
-            role = prefs[stringPreferencesKey("role")]
-            if (role == "driver") {
-                val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
-                driverApproved = FirebaseRidesRepository().getDriverApproval(uid) ?: false
-            }
-            loaded = true
-        } catch (e: Exception) {
-            authError = e.localizedMessage ?: "تعذر الاتصال بـ Firebase"
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    LaunchedEffect(firebaseUser?.uid) {
+        if (firebaseUser != null && Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
-    LaunchedEffect(role) {
+    DisposableEffect(Unit) {
+        val listener = FirebaseAuth.AuthStateListener { firebaseUser = it.currentUser }
+        FirebaseAuth.getInstance().addAuthStateListener(listener)
+        onDispose { FirebaseAuth.getInstance().removeAuthStateListener(listener) }
+    }
+
+    LaunchedEffect(firebaseUser?.uid, role) {
+        val uid = firebaseUser?.uid ?: return@LaunchedEffect
+        runCatching {
+            val token = FirebaseMessaging.getInstance().token.await()
+            FirebaseRidesRepository().saveFcmToken(uid, token)
+        }
+        val prefs = context.dataStore.data.first()
+        if (role == null) role = prefs[stringPreferencesKey("role")]
         if (role == "driver") {
-            val uid = FirebaseAuth.getInstance().currentUser?.uid
-            if (uid != null) {
-                driverApproved = FirebaseRidesRepository().getDriverApproval(uid) ?: false
-                driverPhone = getUserPhone(context)
-            }
+            driverApproved = FirebaseRidesRepository().getDriverApproval(uid) ?: false
+            driverPhone = firebaseUser?.phoneNumber ?: getUserPhone(context)
         }
     }
-    if (!loaded) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            if (authError == null) {
-                CircularProgressIndicator()
-            } else {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(authError!!, color = Color.Red, textAlign = TextAlign.Center)
-                    Button(onClick = {
-                        authError = null
-                        authAttempt++
-                    }) { Text("إعادة المحاولة") }
-                }
-            }
-        }
-        return
-    }
+
     MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFF0D7C3E))) {
-        if (adminMode) {
-            AdminPanel {
-                FirebaseAuth.getInstance().signOut()
-                adminMode = false
-                role = null
+        when {
+            firebaseUser == null -> PhoneAuthScreen { firebaseUser = FirebaseAuth.getInstance().currentUser }
+            adminMode -> AdminPanel {
+                FirebaseAuth.getInstance().signOut(); adminMode = false; role = null
             }
-        } else if (showAdminLogin) {
-            AdminLoginScreen(
+            showAdminLogin -> AdminLoginScreen(
                 onBack = { showAdminLogin = false },
-                onSuccess = {
-                    showAdminLogin = false
-                    adminMode = true
-                }
+                onSuccess = { showAdminLogin = false; adminMode = true }
             )
-        } else if (showDriverRegistration) {
-            DriverRegistrationScreen(
+            showDriverRegistration -> DriverRegistrationScreen(
                 onBack = { showDriverRegistration = false },
-                onComplete = { selectedRole ->
-                    showDriverRegistration = false
-                    role = selectedRole
-                }
+                onComplete = { selectedRole -> showDriverRegistration = false; role = selectedRole }
             )
-        } else if (role == null) {
-            WelcomeV4(
+            showCustomerProfile -> CustomerProfileScreen(
+                onBack = { showCustomerProfile = false },
+                onComplete = { selectedRole -> showCustomerProfile = false; role = selectedRole }
+            )
+            role == null -> WelcomeV4(
                 onSelect = { r ->
-                    if (r == "driver") {
-                        showDriverRegistration = true
-                    } else {
-                        role = r
-                    }
+                    if (r == "driver") showDriverRegistration = true
+                    else showCustomerProfile = true
                 },
                 onAdminRequest = { showAdminLogin = true }
             )
-        } else if (role == "driver" && driverApproved == false) {
-            DriverPendingApprovalScreen(
+            role == "driver" && driverApproved == false -> DriverPendingApprovalScreen(
                 phone = driverPhone,
                 onLogout = {
-                    scope.launch {
-                        context.dataStore.edit {
-                            it.remove(stringPreferencesKey("role"))
-                        }
-                    }
-                    FirebaseAuth.getInstance().signOut()
-                    role = null
-                    driverApproved = null
-                    driverPhone = ""
+                    scope.launch { context.dataStore.edit { it.remove(stringPreferencesKey("role")) } }
+                    FirebaseAuth.getInstance().signOut(); role = null; driverApproved = null; driverPhone = ""
                 }
             )
-        } else {
-            Scaffold(bottomBar = { BottomBarV4(navController, role!!) }) { padding ->
-                NavHost(
-                    navController,
-                    startDestination = "home",
-                    modifier = Modifier.padding(padding)
-                ) {
+            else -> Scaffold(bottomBar = { BottomBarV4(navController, role!!) }) { padding ->
+                NavHost(navController, startDestination = "home", modifier = Modifier.padding(padding)) {
                     composable("home") { HomeV4(navController, role!!) }
                     composable(
                         route = "map?destinationLat={destinationLat}&destinationLon={destinationLon}&destinationAddress={destinationAddress}",
                         arguments = listOf(
-                            navArgument("destinationLat") {
-                                type = NavType.StringType
-                                nullable = true
-                                defaultValue = null
-                            },
-                            navArgument("destinationLon") {
-                                type = NavType.StringType
-                                nullable = true
-                                defaultValue = null
-                            },
-                            navArgument("destinationAddress") {
-                                type = NavType.StringType
-                                nullable = true
-                                defaultValue = null
-                            }
+                            navArgument("destinationLat") { type = NavType.StringType; nullable = true; defaultValue = null },
+                            navArgument("destinationLon") { type = NavType.StringType; nullable = true; defaultValue = null },
+                            navArgument("destinationAddress") { type = NavType.StringType; nullable = true; defaultValue = null }
                         )
                     ) { entry ->
                         val lat = entry.arguments?.getString("destinationLat")?.toDoubleOrNull()
                         val lon = entry.arguments?.getString("destinationLon")?.toDoubleOrNull()
                         val address = entry.arguments?.getString("destinationAddress").orEmpty()
-                        val destination = if (lat != null && lon != null) {
-                            FavPlace("", address, lat, lon)
-                        } else null
-                        MapV4(role!!, destination) { rideId ->
-                            navController.navigate("rides?rideId=$rideId")
-                        }
+                        val destination = if (lat != null && lon != null) FavPlace("", address, lat, lon) else null
+                        MapV4(role!!, destination) { rideId -> navController.navigate("rides?rideId=$rideId") }
                     }
-                    composable(
-                        route = "rides?rideId={rideId}",
-                        arguments = listOf(
-                            navArgument("rideId") {
-                                type = NavType.StringType
-                                nullable = true
-                                defaultValue = null
-                            }
-                        )
-                    ) { entry ->
+                    composable("rides?rideId={rideId}", arguments = listOf(navArgument("rideId") { type = NavType.StringType; nullable = true; defaultValue = null })) { entry ->
                         RidesV4(navController, role!!, entry.arguments?.getString("rideId"))
                     }
                     composable("wallet") { WalletV4() }
-                    composable("account") {
-                        AccountV4(
-                            onAdminRequest = { showAdminLogin = true }
-                        ) {
-                            navController.navigate("home") {
-                                popUpTo("home") { inclusive = false }
-                                launchSingleTop = true
-                            }
-                            role = null
-                        }
-                    }
+                    composable("account") { AccountV4(onAdminRequest = { showAdminLogin = true }) { navController.navigate("home"); role = null } }
                     composable("manage_favs") { ManageFavsV4() }
                 }
             }
@@ -445,7 +380,7 @@ fun DriverRegistrationScreen(
         val savedName = getUserName(context)
         val savedPhone = getUserPhone(context)
         if (savedName != "مستخدم") name = savedName
-        phone = savedPhone
+        phone = FirebaseAuth.getInstance().currentUser?.phoneNumber ?: savedPhone
     }
 
     Column(
@@ -468,8 +403,9 @@ fun DriverRegistrationScreen(
         OutlinedTextField(
             value = phone,
             onValueChange = { phone = it },
-            label = { Text("رقم الموبايل") },
-            modifier = Modifier.fillMaxWidth()
+            label = { Text("رقم الموبايل الموثق") },
+            modifier = Modifier.fillMaxWidth(),
+            readOnly = true
         )
 
         OutlinedTextField(
@@ -806,6 +742,9 @@ fun MapV4(
     }
     var femaleMode by remember { mutableStateOf(false) }
     var withLuggage by remember { mutableStateOf(false) }
+    var bookingType by remember { mutableStateOf("now") }
+    var scheduledAt by remember { mutableStateOf<Long?>(null) }
+    var scheduledLabel by remember { mutableStateOf("") }
     var showSave by remember { mutableStateOf(false) }
     var saveName by remember { mutableStateOf("") }
     var showConfirm by remember { mutableStateOf(false) }
@@ -937,6 +876,25 @@ fun MapV4(
                         onClick = { withLuggage = !withLuggage },
                         label = { Text("📦 حمولة", fontSize = 10.sp) }
                     )
+                    Spacer(Modifier.height(4.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(selected = bookingType == "now", onClick = { bookingType = "now"; scheduledAt = null; scheduledLabel = "" }, label = { Text("🚖 الآن") })
+                        FilterChip(selected = bookingType == "school", onClick = { bookingType = "school" }, label = { Text("🏫 حجز مدارس") })
+                    }
+                    if (bookingType == "school") {
+                        OutlinedButton(
+                            onClick = {
+                                val now = Calendar.getInstance().apply { add(Calendar.MINUTE, 30) }
+                                DatePickerDialog(ctx, { _, y, m, d ->
+                                    TimePickerDialog(ctx, { _, hour, minute ->
+                                        val chosen = Calendar.getInstance().apply { set(y, m, d, hour, minute, 0); set(Calendar.MILLISECOND, 0) }
+                                        if (chosen.timeInMillis > System.currentTimeMillis() + 5 * 60_000) { scheduledAt = chosen.timeInMillis; scheduledLabel = String.format(Locale.US, "%02d/%02d %02d:%02d", d, m + 1, hour, minute) }
+                                        else { resultMsg = "اختار موعدًا بعد 5 دقائق على الأقل" }
+                                    }, now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), true).show()
+                                }, now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH)).show()
+                            }, Modifier.fillMaxWidth()
+                        ) { Text(if (scheduledLabel.isBlank()) "اختيار موعد الحجز" else "الموعد: $scheduledLabel") }
+                    }
                 }
             }
         }
@@ -966,14 +924,14 @@ fun MapV4(
                     Button(
                         onClick = { showConfirm = true },
                         modifier = Modifier.fillMaxWidth().height(50.dp),
-                        enabled = isInside && !isLoading && role == "customer"
+                        enabled = isInside && !isLoading && role == "customer" && (bookingType == "now" || scheduledAt != null)
                     ) {
                         if (isLoading) CircularProgressIndicator(
                             Modifier.size(20.dp),
                             color = Color.White,
                             strokeWidth = 2.dp
                         )
-                        else Text("✅ اطلب التوكتوك حالاً")
+                        else Text(if (bookingType == "school") "🏫 احجز رحلة المدرسة" else "✅ اطلب التوكتوك حالاً")
                     }
                     Spacer(Modifier.height(6.dp))
                     Row(
@@ -1017,9 +975,11 @@ fun MapV4(
             title = { Text("تأكيد طلب المشوار") },
             text = {
                 Text(
-                    "من: $pickupAddr\nإلى: $dropoffAddr\nالمسافة: %.2f كم تقريباً\nالسائقون سيرسلون عروض السعر ووقت الوصول، وبعدها تختار العرض المناسب.".format(
-                        km
-                    )
+                    if (bookingType == "school") {
+                        "من: $pickupAddr\nإلى: $dropoffAddr\nالمسافة: %.2f كم تقريباً\nموعد الحجز: ${scheduledLabel.ifBlank { "غير محدد" }}\nسيتم إرسال الطلب للسائقين تلقائياً وقت الموعد.".format(km)
+                    } else {
+                        "من: $pickupAddr\nإلى: $dropoffAddr\nالمسافة: %.2f كم تقريباً\nالسائقون سيرسلون عروض السعر ووقت الوصول، وبعدها تختار العرض المناسب.".format(km)
+                    }
                 )
             },
             confirmButton = {
@@ -1047,7 +1007,9 @@ fun MapV4(
                                     to = dropoff!!,
                                     distanceKm = km,
                                     femaleMode = femaleMode,
-                                    withLuggage = withLuggage
+                                    withLuggage = withLuggage,
+                                    bookingType = bookingType,
+                                    scheduledAt = scheduledAt
                                 )
                                 onRideCreated(rideId)
                             } catch (_: Exception) {
@@ -1161,7 +1123,7 @@ fun AccountV4(onAdminRequest: () -> Unit, onRoleChanged: () -> Unit) {
 
     LaunchedEffect(Unit) {
         name = getUserName(ctx)
-        phone = getUserPhone(ctx)
+        phone = FirebaseAuth.getInstance().currentUser?.phoneNumber ?: getUserPhone(ctx)
         if (name == "مستخدم") name = ""
     }
 
@@ -1192,9 +1154,10 @@ fun AccountV4(onAdminRequest: () -> Unit, onRoleChanged: () -> Unit) {
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
-            value = phone,
-            onValueChange = { phone = it },
-            label = { Text("رقم الموبايل (مطلوب لطلب الرحلة)") },
+            value = FirebaseAuth.getInstance().currentUser?.phoneNumber ?: phone,
+            onValueChange = { },
+            label = { Text("رقم الموبايل الموثق") },
+            readOnly = true,
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(Modifier.height(12.dp))

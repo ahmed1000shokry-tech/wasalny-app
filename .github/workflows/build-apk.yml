@@ -23,8 +23,11 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Validate Gradle configuration
+        run: ./gradlew tasks --no-daemon
+
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

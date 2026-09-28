@@ -12,3 +12,8 @@ keystore.properties
 
 # Local Firebase CLI state
 .firebase/
+
+# Signing keys / local secrets
+*.keystore
+*.p12
+*.pem

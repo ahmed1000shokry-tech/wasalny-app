@@ -15,31 +15,41 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.wasalny.sidisalem"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.wasalny.sidisalem"
         minSdk = 24
-        targetSdk = 34
-        versionCode = 6
-        versionName = "4.1.1"
+        targetSdk = 35
+        versionCode = 7
+        versionName = "5.1.0"
 
     }
 
-    signingConfigs {
-        create("release") {
-            val storeFilePath = keystoreProperties.getProperty("storeFile", "release-keystore.jks")
-            storeFile = rootProject.file(storeFilePath)
-            storePassword = keystoreProperties.getProperty("storePassword", "wasalny123")
-            keyAlias = keystoreProperties.getProperty("keyAlias", "wasalny")
-            keyPassword = keystoreProperties.getProperty("keyPassword", "wasalny123")
+    // Release signing is intentionally configured only from the local/CI
+    // keystore.properties file. Never keep passwords or keystores in Git.
+    if (keystorePropertiesFile.exists()) {
+        signingConfigs {
+            create("release") {
+                val storeFilePath = keystoreProperties.getProperty("storeFile")
+                    ?: error("storeFile is required in keystore.properties")
+                storeFile = rootProject.file(storeFilePath)
+                storePassword = keystoreProperties.getProperty("storePassword")
+                    ?: error("storePassword is required in keystore.properties")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                    ?: error("keyAlias is required in keystore.properties")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                    ?: error("keyPassword is required in keystore.properties")
+            }
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -62,7 +72,7 @@ android {
         buildConfig = true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
+        kotlinCompilerExtensionVersion = "1.5.14"
     }
     packaging {
         resources {
@@ -90,5 +100,7 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-auth-ktx")
     implementation("com.google.firebase:firebase-firestore-ktx")
+    implementation("com.google.firebase:firebase-functions")
+    implementation("com.google.firebase:firebase-messaging-ktx")
     implementation("com.firebase:geofire-android-common:3.2.0")
 }

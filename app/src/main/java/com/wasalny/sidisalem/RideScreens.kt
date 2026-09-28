@@ -1,6 +1,7 @@
 package com.wasalny.sidisalem
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,29 +16,33 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.Priority
-import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.ListenerRegistration
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
+import org.osmdroid.config.Configuration
+import org.osmdroid.util.GeoPoint as OsmGeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.Marker
 
 @Composable
 fun RidesV4(nav: NavController, role: String, activeRideId: String? = null) {
-    val userId = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
-    if (role == "driver") {
-        DriverRideRequestsScreen(userId)
-    } else if (!activeRideId.isNullOrBlank()) {
-        CustomerRideOffersScreen(activeRideId, userId, nav)
+    val uid = FirebaseAuth.getInstance().currentUser?.uid
+    if (uid == null) {
+        Text("انتهت جلسة الحساب. أعد فتح التطبيق.")
+        return
+    }
+    if (role == "driver") DriverRideRequestsScreen(uid) else if (activeRideId != null) {
+        CustomerRideOffersScreen(activeRideId, uid, nav)
     } else {
-        CustomerRideHistoryScreen(userId, nav)
+        CustomerRideHistoryScreen(uid, nav)
     }
 }
 
@@ -45,141 +50,173 @@ fun RidesV4(nav: NavController, role: String, activeRideId: String? = null) {
 private fun CustomerRideOffersScreen(rideId: String, customerId: String, nav: NavController) {
     val repository = remember { FirebaseRidesRepository() }
     val scope = rememberCoroutineScope()
-    var ride by remember(rideId) { mutableStateOf<RideRecord?>(null) }
-    var offers by remember(rideId) { mutableStateOf<List<RideOffer>>(emptyList()) }
-    var stageMessage by remember(rideId) { mutableStateOf("جارٍ تجهيز البحث عن السائقين...") }
-    var error by remember(rideId) { mutableStateOf<String?>(null) }
-    var busyDriverId by remember(rideId) { mutableStateOf<String?>(null) }
+    var ride by remember { mutableStateOf<RideRecord?>(null) }
+    var offers by remember { mutableStateOf<List<RideOffer>>(emptyList()) }
+    var driverLocation by remember { mutableStateOf<DriverLiveLocation?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var busyDriverId by remember { mutableStateOf<String?>(null) }
+    var showRating by remember { mutableStateOf(false) }
+    var alreadyRated by remember { mutableStateOf(false) }
 
     DisposableEffect(rideId) {
-        val registrations = mutableListOf<ListenerRegistration>()
-        registrations += repository.listenRide(rideId, { ride = it }, { error = it.localizedMessage })
-        registrations += repository.listenOffers(rideId, { offers = it }, { error = it.localizedMessage })
-        onDispose { registrations.forEach { it.remove() } }
+        val regs = mutableListOf<ListenerRegistration>()
+        regs += repository.listenRide(rideId, { ride = it }, { error = it.localizedMessage })
+        regs += repository.listenOffers(rideId, { offers = it }, { error = it.localizedMessage })
+        onDispose { regs.forEach { it.remove() } }
+    }
+
+    DisposableEffect(ride?.selectedDriverId) {
+        val driverId = ride?.selectedDriverId
+        if (driverId == null) return@DisposableEffect onDispose { }
+        val reg = repository.listenDriverLocation(driverId, { driverLocation = it }, { error = it.localizedMessage })
+        onDispose { reg.remove() }
     }
 
     LaunchedEffect(rideId) {
-        try {
-            val currentRide = repository.getRide(rideId)
-                ?: throw IllegalStateException("الرحلة غير موجودة أو لا تملك صلاحية عرضها")
-            ride = currentRide
-            if (currentRide.status == "searching") {
-                repository.runSearch(rideId, Coordinate(currentRide.fromLat, currentRide.fromLon)) { radius, count ->
-                    stageMessage = if (count == 0) {
-                        "لا يوجد سائق متاح في النطاق الحالي. جارٍ توسيع البحث..."
-                    } else {
-                        "تم إرسال الطلب لسائقين ضمن ${radius}م. ننتظر عروضهم حتى 15 ثانية..."
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            error = e.localizedMessage ?: "تعذر متابعة البحث"
+        // Retry/start the server-side matcher without blocking the UI.
+        runCatching { repository.runSearch(rideId, Coordinate(0.0, 0.0)) { _, _ -> } }
+    }
+
+    LaunchedEffect(ride?.status) {
+        if (ride?.status == "completed") {
+            alreadyRated = runCatching { repository.hasSubmittedRating(rideId, customerId) }.getOrDefault(false)
         }
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("عروض السائقين", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("متابعة الرحلة", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
             TextButton(onClick = { nav.navigate("rides") }) { Text("رحلاتي") }
         }
         ride?.let { current ->
             Text("${current.from} → ${current.to}", fontWeight = FontWeight.SemiBold)
-            Text("المسافة التقريبية: %.2f كم".format(current.distanceKm), color = Color.Gray)
+            Text("المسافة: %.2f كم".format(current.distanceKm), color = Color.Gray)
+            if (current.selectedPrice != null) Text("الأجرة المتفق عليها: ${current.selectedPrice} جنيه", fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
-            when (current.status) {
-                "searching" -> Text("${stageMessage}\nنطاق البحث الحالي: ${current.searchRadiusMeters}م")
-                "offered" -> Text("انتهى البحث. اختر العرض المناسب لك.", color = Color(0xFF0D7C3E))
-                "accepted" -> Text("تم اختيار السائق: ${current.selectedDriverId}", color = Color(0xFF0D7C3E))
-                "no_drivers" -> Text("لم نجد سائقاً متاحاً خلال البحث حتى 5 كم.", color = Color(0xFFB3261E))
-                "cancelled" -> Text("تم إلغاء الطلب.", color = Color.Gray)
-                else -> Text("حالة الرحلة: ${current.status}")
+            StatusCard(current.status)
+            if (current.selectedDriverId != null && driverLocation != null) {
+                val age = driverLocation?.updatedAt?.let { (System.currentTimeMillis() - it) / 1000 }
+                Text("موقع التوكتوك: %.5f, %.5f".format(driverLocation!!.lat, driverLocation!!.lon), color = Color(0xFF0D7C3E))
+                Text("آخر تحديث: ${age ?: 0} ثانية", color = Color.Gray, fontSize = MaterialTheme.typography.bodySmall.fontSize)
+                LiveRideMap(
+                    pickup = Coordinate(current.fromLat, current.fromLon),
+                    dropoff = Coordinate(current.toLat, current.toLon),
+                    driver = Coordinate(driverLocation!!.lat, driverLocation!!.lon)
+                )
             }
         }
-        if (error != null) {
-            Text(error!!, color = Color(0xFFB3261E))
-            TextButton(onClick = {
-                error = null
-                scope.launch {
-                    val currentRide = repository.getRide(rideId)
-                    if (currentRide?.status == "searching") {
-                        repository.runSearch(rideId, Coordinate(currentRide.fromLat, currentRide.fromLon)) { radius, count ->
-                            stageMessage = "نطاق البحث ${radius}م، سائقون جدد: $count"
-                        }
-                    }
-                }
-            }) { Text("إعادة المحاولة") }
+        if (error != null) Text(error!!, color = Color(0xFFB3261E))
+        Spacer(Modifier.height(10.dp))
+        val currentStatus = ride?.status
+        if (currentStatus == "completed" && !alreadyRated) {
+            Button(onClick = { showRating = true }, modifier = Modifier.fillMaxWidth()) { Text("⭐ قيّم الرحلة والسائق") }
         }
-        Spacer(Modifier.height(12.dp))
-        if (offers.isEmpty()) {
-            if (ride?.status == "searching") {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-                Spacer(Modifier.height(8.dp))
-                Text("أول ما يوصل عرض هيظهر هنا. البحث يتوسع من 500م حتى 5كم.", color = Color.Gray)
-            } else if (ride?.status == "no_drivers") {
-                Text("لا توجد عروض لهذه الرحلة.", color = Color.Gray)
-            }
-        } else {
+        if (currentStatus == "searching" || currentStatus == "offered") {
             Text("العروض (${offers.size})", fontWeight = FontWeight.Bold)
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(offers, key = { it.driverId }) { offer ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(14.dp)) {
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(offer.driverName, fontWeight = FontWeight.Bold)
-                                Text("${offer.price} جنيه", color = Color(0xFF0D7C3E), fontWeight = FontWeight.Bold)
-                            }
-                            Text("وقت الوصول المتوقع: ${offer.etaMinutes} دقيقة")
-                            when {
-                                offer.status == "selected" -> Text("تم اختيار هذا العرض", color = Color(0xFF0D7C3E))
-                                ride?.status in listOf("searching", "offered") -> Button(
-                                    enabled = busyDriverId == null,
-                                    onClick = {
-                                        busyDriverId = offer.driverId
-                                        scope.launch {
-                                            try {
-                                                repository.selectOffer(rideId, customerId, offer.driverId)
-                                            } catch (e: Exception) {
-                                                error = e.localizedMessage ?: "تعذر اختيار العرض"
-                                            } finally {
-                                                busyDriverId = null
-                                            }
-                                        }
-                                    }
-                                ) {
-                                    if (busyDriverId == offer.driverId) {
-                                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                    } else Text("اختيار العرض")
+            if (offers.isEmpty()) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text("بنوسع البحث تلقائياً: 500م → 1كم → 2كم → 5كم", color = Color.Gray)
+            } else {
+                LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(offers, key = { it.driverId }) { offer ->
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(14.dp)) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(offer.driverName, fontWeight = FontWeight.Bold)
+                                    Text("${offer.price} جنيه", color = Color(0xFF0D7C3E), fontWeight = FontWeight.Bold)
                                 }
+                                Text("الوصول المتوقع: ${offer.etaMinutes} دقيقة")
+                                Button(enabled = busyDriverId == null, onClick = {
+                                    busyDriverId = offer.driverId
+                                    scope.launch {
+                                        try { repository.selectOffer(rideId, customerId, offer.driverId) }
+                                        catch (e: Exception) { error = e.localizedMessage ?: "تعذر اختيار العرض" }
+                                        finally { busyDriverId = null }
+                                    }
+                                }) { if (busyDriverId == offer.driverId) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("اختيار هذا السائق") }
                             }
                         }
                     }
                 }
             }
+            OutlinedButton(onClick = { scope.launch { runCatching { repository.cancelRide(rideId, customerId) }.onFailure { error = it.localizedMessage } } }, Modifier.fillMaxWidth()) {
+                Text("إلغاء الطلب")
+            }
+        } else if (currentStatus in listOf("scheduled", "accepted", "driver_arriving", "driver_arrived", "in_progress")) {
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(onClick = { scope.launch { runCatching { repository.updateRideStatus(rideId, customerId, "cancelled") }.onFailure { error = it.localizedMessage } } }, Modifier.fillMaxWidth()) {
+                Text("إلغاء الرحلة")
+            }
         }
-        if (ride?.status in listOf("searching", "offered")) {
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        try {
-                            repository.cancelRide(rideId, customerId)
-                        } catch (e: Exception) {
-                            error = e.localizedMessage
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("إلغاء البحث") }
+    }
+
+    if (showRating) {
+        RatingDialog(
+            title = "تقييم السائق",
+            onDismiss = { showRating = false },
+            onSubmit = { stars, comment ->
+                scope.launch {
+                    try {
+                        repository.submitRating(rideId, customerId, stars, comment)
+                        alreadyRated = true
+                        showRating = false
+                    } catch (e: Exception) { error = e.localizedMessage ?: "تعذر إرسال التقييم" }
+                }
+            }
+        )
+    }
+}
+
+
+@Composable
+private fun LiveRideMap(pickup: Coordinate, dropoff: Coordinate, driver: Coordinate) {
+    AndroidView(
+        modifier = Modifier.fillMaxWidth().height(210.dp),
+        factory = { context ->
+            Configuration.getInstance().userAgentValue = context.packageName
+            MapView(context).apply {
+                setTileSource(org.osmdroid.tileprovider.tilesource.TileSourceFactory.MAPNIK)
+                setMultiTouchControls(true)
+                controller.setZoom(15.0)
+                controller.setCenter(OsmGeoPoint(driver.latitude, driver.longitude))
+                onResume()
+            }
+        },
+        update = { map ->
+            map.controller.setCenter(OsmGeoPoint(driver.latitude, driver.longitude))
+            map.overlays.removeAll(map.overlays.filterIsInstance<Marker>())
+            listOf(
+                Triple(pickup, "نقطة الركوب", "📍"),
+                Triple(dropoff, "الوجهة", "🏁"),
+                Triple(driver, "التوكتوك الآن", "🚖")
+            ).forEach { (point, title, _) ->
+                map.overlays.add(Marker(map).apply {
+                    position = OsmGeoPoint(point.latitude, point.longitude)
+                    this.title = title
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                })
+            }
+            map.invalidate()
         }
+    )
+}
+
+@Composable
+private fun StatusCard(status: String) {
+    val (title, text) = when (status) {
+        "searching" -> "جارٍ البحث" to "يتم البحث عن توكتوك قريب منك."
+        "offered" -> "وصلت عروض" to "اختار السعر ووقت الوصول المناسبين."
+        "accepted" -> "تم اختيار السائق" to "السائق سيبدأ التوجه إليك."
+        "driver_arriving" -> "السائق في الطريق" to "التوكتوك متجه إلى نقطة الركوب."
+        "driver_arrived" -> "السائق وصل" to "السائق ينتظر عند نقطة الركوب."
+        "in_progress" -> "الرحلة بدأت" to "رحلتك جارية الآن."
+        "completed" -> "اكتملت الرحلة" to "تم إنهاء الرحلة بنجاح."
+        "cancelled" -> "تم الإلغاء" to "تم إغلاق الرحلة."
+        "no_drivers" -> "لا يوجد سائقون" to "لم يصل عرض مناسب خلال نطاق البحث."
+        else -> "حالة الرحلة" to status
+    }
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))) {
+        Column(Modifier.padding(12.dp)) { Text(title, fontWeight = FontWeight.Bold); Text(text, color = Color.Gray) }
     }
 }
 
@@ -188,33 +225,22 @@ private fun CustomerRideHistoryScreen(customerId: String, nav: NavController) {
     val repository = remember { FirebaseRidesRepository() }
     var rides by remember { mutableStateOf<List<RideRecord>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
-
     DisposableEffect(customerId) {
-        val registration = repository.listenCustomerRides(
-            customerId,
-            { rides = it },
-            { error = it.localizedMessage ?: "تعذر تحميل الرحلات" }
-        )
+        val registration = repository.listenCustomerRides(customerId, { rides = it }, { error = it.localizedMessage ?: "تعذر تحميل الرحلات" })
         onDispose { registration.remove() }
     }
-
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("رحلاتي", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
         if (error != null) Text(error!!, color = Color(0xFFB3261E))
-        if (rides.isEmpty() && error == null) {
-            Text("لا توجد رحلات بعد.", color = Color.Gray)
-        } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(rides, key = { it.id }) { ride ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text("${ride.from} → ${ride.to}", fontWeight = FontWeight.Bold)
-                            Text("الحالة: ${ride.status.arabicRideStatus()} | %.2f كم".format(ride.distanceKm))
-                            if (ride.status in listOf("searching", "offered")) {
-                                TextButton(onClick = { nav.navigate("rides?rideId=${ride.id}") }) {
-                                    Text("عرض العروض ومتابعة البحث")
-                                }
-                            }
+        if (rides.isEmpty()) Text("لا توجد رحلات بعد.", color = Color.Gray)
+        else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(rides, key = { it.id }) { ride ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("${ride.from} → ${ride.to}", fontWeight = FontWeight.Bold)
+                        Text("${ride.status.arabicRideStatus()} | %.2f كم".format(ride.distanceKm))
+                        if (ride.status !in listOf("completed", "cancelled", "no_drivers")) {
+                            TextButton(onClick = { nav.navigate("rides?rideId=${ride.id}") }) { Text("متابعة الرحلة") }
                         }
                     }
                 }
@@ -230,140 +256,106 @@ private fun DriverRideRequestsScreen(driverId: String) {
     val repository = remember { FirebaseRidesRepository() }
     val fused = remember { LocationServices.getFusedLocationProviderClient(context) }
     var approved by remember { mutableStateOf<Boolean?>(null) }
-    var locationAllowed by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        )
-    }
+    var online by remember { mutableStateOf(false) }
+    var locationAllowed by remember { mutableStateOf(hasLocationPermission(context)) }
     var requests by remember { mutableStateOf<List<DriverRideRequest>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var selectedRequest by remember { mutableStateOf<DriverRideRequest?>(null) }
+    var selectedRide by remember { mutableStateOf<RideRecord?>(null) }
     var selectedCustomerPhone by remember { mutableStateOf<String?>(null) }
     var priceText by remember { mutableStateOf("") }
     var etaText by remember { mutableStateOf("10") }
     var sendingOffer by remember { mutableStateOf(false) }
+    var showDriverRating by remember { mutableStateOf(false) }
+    var driverAlreadyRated by remember { mutableStateOf(false) }
 
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        locationAllowed = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-                result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        locationAllowed = result[Manifest.permission.ACCESS_FINE_LOCATION] == true || result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
     }
 
     LaunchedEffect(driverId) {
-        try {
-            repository.ensureDriverProfile(driverId, getUserName(context))
-            approved = repository.getDriverApproval(driverId)
-        } catch (e: Exception) {
-            error = e.localizedMessage ?: "تعذر تسجيل حساب السائق"
-        }
-    }
-
-    LaunchedEffect(approved, locationAllowed) {
-        if (approved == true && !locationAllowed) {
-            locationPermissionLauncher.launch(
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
-            )
-        }
-    }
-
-    LaunchedEffect(driverId, approved, locationAllowed) {
-        if (approved == true && locationAllowed) {
-            try {
-                while (isActive) {
-                    val location = fused.getCurrentLocation(
-                        Priority.PRIORITY_HIGH_ACCURACY,
-                        CancellationTokenSource().token
-                    ).await()
-                    if (location != null && System.currentTimeMillis() - location.time < 30_000 && location.accuracy <= 100f) {
-                        repository.publishDriverLocation(
-                            driverId,
-                            getUserName(context),
-                            Coordinate(location.latitude, location.longitude)
-                        )
-                        error = null
-                    } else {
-                        error = "تعذر الحصول على موقع حديث ودقيق. تأكد من تشغيل GPS."
-                    }
-                    delay(15_000)
-                }
-            } catch (e: Exception) {
-                error = e.localizedMessage ?: "تعذر تحديث موقع السائق"
-            }
-        }
+        try { repository.ensureDriverProfile(driverId, getUserName(context)); approved = repository.getDriverApproval(driverId); online = repository.getDriverAvailability(driverId) }
+        catch (e: Exception) { error = e.localizedMessage ?: "تعذر قراءة حساب السائق" }
     }
 
     DisposableEffect(driverId, approved) {
-        var registration: ListenerRegistration? = null
-        if (approved == true) {
-            registration = repository.listenDriverRequests(
-                driverId,
-                { requests = it },
-                { error = it.localizedMessage ?: "تعذر تحميل الطلبات" }
-            )
+        if (approved != true) return@DisposableEffect onDispose { }
+        val registration = repository.listenDriverRequests(driverId, { requests = it }, { error = it.localizedMessage ?: "تعذر تحميل الطلبات" })
+        onDispose { registration.remove(); scope.launch { runCatching { repository.markDriverOffline(driverId) } } }
+    }
+
+    LaunchedEffect(selectedRequest?.rideId) {
+        val id = selectedRequest?.rideId ?: return@LaunchedEffect
+        while (isActive) {
+            selectedRide = repository.getRide(id)
+            if (selectedRide?.status in listOf("completed", "cancelled")) break
+            delay(2000)
         }
-        onDispose {
-            registration?.remove()
-            if (approved == true) scope.launch { runCatching { repository.markDriverOffline(driverId) } }
+    }
+
+    LaunchedEffect(selectedRide?.status, selectedRide?.id) {
+        if (selectedRide?.status == "completed") {
+            driverAlreadyRated = runCatching { repository.hasSubmittedRating(selectedRide!!.id, driverId) }.getOrDefault(false)
         }
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("طلبات المشاوير", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+        Text("طلبات السائق", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
         when (approved) {
             null -> CircularProgressIndicator()
-            false -> {
-                Text("حساب السائق ينتظر اعتماد الإدارة قبل استقبال الطلبات.", color = Color(0xFFB3261E))
-                Text("معرّف الحساب: $driverId", color = Color.Gray)
-            }
+            false -> Text("حسابك بانتظار اعتماد الإدارة.", color = Color(0xFFB3261E))
             true -> {
-                Text(
-                    if (locationAllowed) "متصل: يتم تحديث موقعك كل 15 ثانية أثناء فتح هذه الشاشة."
-                    else "اسمح بالموقع لتظهر لك الطلبات القريبة.",
-                    color = Color.Gray
-                )
                 if (!locationAllowed) {
-                    Button(onClick = {
-                        locationPermissionLauncher.launch(
-                            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
-                        )
-                    }) { Text("السماح بالموقع") }
+                    Button(onClick = { permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) }) { Text("السماح بالموقع") }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (online) "🟢 متاح لاستقبال الرحلات" else "⚪ غير متاح")
+                    Switch(checked = online, enabled = locationAllowed, onCheckedChange = { target ->
+                        scope.launch {
+                            try {
+                                repository.setDriverAvailability(driverId, target)
+                                online = target
+                                val serviceIntent = Intent(context, DriverLocationService::class.java).apply {
+                                    putExtra(DriverLocationService.EXTRA_UID, driverId)
+                                    putExtra(DriverLocationService.EXTRA_NAME, getUserName(context))
+                                }
+                                if (target) ContextCompat.startForegroundService(context, serviceIntent)
+                                else context.stopService(serviceIntent)
+                            } catch (e: Exception) { error = e.localizedMessage ?: "تعذر تغيير الحالة" }
+                        }
+                    })
                 }
                 if (error != null) Text(error!!, color = Color(0xFFB3261E))
-                val visibleRequests = requests.filter { it.status == "searching" || it.status == "selected" }
-                if (visibleRequests.isEmpty()) {
-                    Spacer(Modifier.height(12.dp))
-                    Text("لا توجد طلبات في نطاق موقعك حالياً.", color = Color.Gray)
-                } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(visibleRequests, key = { it.rideId }) { request ->
-                            Card(Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(12.dp)) {
-                                    Text("${request.from} → ${request.to}", fontWeight = FontWeight.Bold)
-                                    Text("المسافة: %.2f كم تقريباً | نطاق الإرسال: ${request.radiusMeters}م".format(request.distanceKm))
-                                    if (request.status == "selected") {
-                                        Text("الراكب اختار عرضك.", color = Color(0xFF0D7C3E))
-                                        TextButton(onClick = {
-                                            scope.launch {
-                                                try {
-                                                    selectedCustomerPhone = repository.getAcceptedCustomerPhone(
-                                                        request.rideId,
-                                                        driverId
-                                                    )
-                                                } catch (e: Exception) {
-                                                    error = e.localizedMessage
-                                                }
-                                            }
-                                        }) { Text("عرض رقم التواصل") }
-                                        selectedCustomerPhone?.let { Text("رقم الراكب: $it") }
-                                    } else {
-                                        Button(onClick = {
-                                            selectedRequest = request
-                                            priceText = ""
-                                            etaText = "10"
-                                        }) { Text("تقديم عرض سعر") }
+                val visible = requests.filter { it.status == "searching" || it.status == "selected" }
+                if (visible.isEmpty()) Text("لا توجد طلبات متاحة حالياً.", color = Color.Gray)
+                else LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(visible, key = { it.rideId }) { request ->
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text("${request.from} → ${request.to}", fontWeight = FontWeight.Bold)
+                                Text("%.2f كم | نطاق ${request.radiusMeters}م".format(request.distanceKm))
+                                if (request.status == "selected") {
+                                    Text("الراكب اختار عرضك.", color = Color(0xFF0D7C3E), fontWeight = FontWeight.Bold)
+                                    val rs = selectedRide?.takeIf { it.id == request.rideId }
+                                    if (rs != null) {
+                                        DriverActionButtons(repository, driverId, rs, errorSetter = { error = it })
+                                        if (rs.status == "completed" && !driverAlreadyRated) {
+                                            Button(onClick = { showDriverRating = true }, modifier = Modifier.fillMaxWidth()) { Text("⭐ قيّم الراكب") }
+                                        }
                                     }
+                                    TextButton(onClick = { scope.launch { runCatching { selectedCustomerPhone = repository.getAcceptedCustomerPhone(request.rideId, driverId) }.onFailure { error = it.localizedMessage } } }) { Text("عرض رقم الراكب") }
+                                    selectedCustomerPhone?.let { Text("رقم الراكب: $it") }
+                                } else {
+                                    Button(enabled = online, onClick = {
+                                        scope.launch {
+                                            val current = repository.getRide(request.rideId)
+                                            if (current?.status == "searching") {
+                                                selectedRequest = request; priceText = ""; etaText = "10"
+                                            } else {
+                                                error = "الرحلة لم تعد متاحة لاستقبال عروض جديدة."
+                                            }
+                                        }
+                                    }) { Text("تقديم عرض") }
                                 }
                             }
                         }
@@ -377,65 +369,100 @@ private fun DriverRideRequestsScreen(driverId: String) {
         AlertDialog(
             onDismissRequest = { if (!sendingOffer) selectedRequest = null },
             title = { Text("عرضك للرحلة") },
-            text = {
-                Column {
-                    Text("من ${request.from} إلى ${request.to}")
-                    OutlinedTextField(
-                        value = priceText,
-                        onValueChange = { priceText = it.filter(Char::isDigit).take(6) },
-                        label = { Text("السعر بالجنيه") },
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = etaText,
-                        onValueChange = { etaText = it.filter(Char::isDigit).take(3) },
-                        label = { Text("وقت الوصول بالدقائق") },
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
-                    )
-                    if (error != null) Text(error!!, color = Color(0xFFB3261E))
+            text = { Column {
+                Text("${request.from} → ${request.to}")
+                OutlinedTextField(value = priceText, onValueChange = { priceText = it.filter(Char::isDigit).take(6) }, label = { Text("السعر بالجنيه") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                OutlinedTextField(value = etaText, onValueChange = { etaText = it.filter(Char::isDigit).take(3) }, label = { Text("الوصول بالدقائق") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+            } },
+            confirmButton = { Button(enabled = !sendingOffer && priceText.toIntOrNull()?.let { it in 1..100000 } == true && etaText.toIntOrNull()?.let { it in 1..240 } == true, onClick = {
+                sendingOffer = true; scope.launch {
+                    try { repository.submitOffer(request.rideId, driverId, getUserName(context), priceText.toInt(), etaText.toInt()); selectedRequest = null }
+                    catch (e: Exception) { error = e.localizedMessage ?: "تعذر إرسال العرض" }
+                    finally { sendingOffer = false }
                 }
-            },
-            confirmButton = {
-                Button(
-                        enabled = !sendingOffer &&
-                            (priceText.toIntOrNull()?.let { it in 1..100_000 } == true) &&
-                            (etaText.toIntOrNull()?.let { it in 1..240 } == true),
-                    onClick = {
-                        val price = priceText.toInt()
-                        val eta = etaText.toInt()
-                        sendingOffer = true
-                        scope.launch {
-                            try {
-                                repository.submitOffer(request.rideId, driverId, getUserName(context), price, eta)
-                                selectedRequest = null
-                                error = null
-                            } catch (e: Exception) {
-                                error = e.localizedMessage ?: "تعذر إرسال العرض"
-                            } finally {
-                                sendingOffer = false
-                            }
-                        }
-                    }
-                ) {
-                    if (sendingOffer) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    else Text("إرسال العرض")
+            }) { Text("إرسال العرض") } },
+            dismissButton = { TextButton(onClick = { selectedRequest = null }, enabled = !sendingOffer) { Text("إلغاء") } }
+        )
+    }
+
+    if (showDriverRating && selectedRide != null) {
+        RatingDialog(
+            title = "تقييم الراكب",
+            onDismiss = { showDriverRating = false },
+            onSubmit = { stars, comment ->
+                scope.launch {
+                    try {
+                        repository.submitRating(selectedRide!!.id, driverId, stars, comment)
+                        driverAlreadyRated = true
+                        showDriverRating = false
+                    } catch (e: Exception) { error = e.localizedMessage ?: "تعذر إرسال التقييم" }
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { selectedRequest = null }, enabled = !sendingOffer) { Text("إلغاء") }
             }
         )
     }
 }
 
 @Composable
+private fun DriverActionButtons(repository: FirebaseRidesRepository, driverId: String, ride: RideRecord, errorSetter: (String?) -> Unit) {
+    val scope = rememberCoroutineScope()
+    val next = when (ride.status) {
+        "accepted" -> "driver_arriving" to "🚦 بدأت التوجه للراكب"
+        "driver_arriving" -> "driver_arrived" to "📍 وصلت للراكب"
+        "driver_arrived" -> "in_progress" to "▶️ ابدأ الرحلة"
+        "in_progress" -> "completed" to "✅ إنهاء الرحلة"
+        else -> null
+    }
+    if (next != null) {
+        Button(onClick = { scope.launch { runCatching { repository.updateRideStatus(ride.id, driverId, next.first) }.onFailure { errorSetter(it.localizedMessage) } } }, modifier = Modifier.fillMaxWidth()) { Text(next.second) }
+    }
+    if (ride.status in listOf("accepted", "driver_arriving", "driver_arrived", "in_progress")) {
+        OutlinedButton(onClick = { scope.launch { runCatching { repository.updateRideStatus(ride.id, driverId, "cancelled") }.onFailure { errorSetter(it.localizedMessage) } } }, modifier = Modifier.fillMaxWidth()) { Text("إلغاء الرحلة") }
+    }
+}
+
+
+@Composable
+private fun RatingDialog(title: String, onDismiss: () -> Unit, onSubmit: (Int, String) -> Unit) {
+    var stars by remember { mutableIntStateOf(5) }
+    var comment by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("اختار عدد النجوم")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    (1..5).forEach { value ->
+                        TextButton(onClick = { stars = value }) {
+                            Text(if (value <= stars) "★" else "☆", fontSize = 30.sp, color = Color(0xFFFFB300))
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = comment, onValueChange = { comment = it.take(300) },
+                    label = { Text("ملاحظة اختيارية") }, modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = { Button(onClick = { onSubmit(stars, comment) }) { Text("إرسال التقييم") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("لاحقًا") } }
+    )
+}
+
+private fun hasLocationPermission(context: android.content.Context): Boolean =
+    ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
 private fun String.arabicRideStatus(): String = when (this) {
-    "searching" -> "جارٍ البحث عن سائقين"
+    "scheduled" -> "حجز مسبق"
+    "searching" -> "جارٍ البحث"
     "offered" -> "وصلت عروض"
-    "accepted" -> "تم اختيار سائق"
-    "no_drivers" -> "لا يوجد سائقون"
+    "accepted" -> "تم اختيار السائق"
+    "driver_arriving" -> "السائق في الطريق"
+    "driver_arrived" -> "السائق وصل"
+    "in_progress" -> "الرحلة جارية"
+    "completed" -> "مكتملة"
     "cancelled" -> "ملغاة"
+    "no_drivers" -> "لا يوجد سائقون"
     else -> this
 }
