@@ -23,13 +23,6 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Configure Firebase
-        if: ${{ secrets.GOOGLE_SERVICES_JSON != '' }}
-        env:
-          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
-        run: |
-          printf '%s' "$GOOGLE_SERVICES_JSON" | base64 --decode > app/google-services.json
-
       - name: Validate Gradle configuration
         run: ./gradlew tasks --no-daemon
 
@@ -41,4 +34,4 @@ jobs:
         with:
           name: Wasalny-APK
           path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+          if-no-files-found: errorٍ
