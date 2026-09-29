@@ -102,13 +102,13 @@ export const startRideSearch = onCall({ region: "us-central1", timeoutSeconds: 7
   return performRideSearch(uid, rideId);
 });
 
-export const dispatchScheduledRides = onSchedule({ schedule: "every 1 minutes", region: "us-central1", timeZone: "Africa/Cairo", memory: "512MiB", timeoutSeconds: 540 }, async () => {
+export const dispatchScheduledRides = onSchedule({ schedule: "every 1 minutes", region: "us-central1", timeZone: "Africa/Cairo", memory: "512MiB", timeoutSeconds: 540, maxInstances: 1 }, async () => {
   const now = Date.now();
   const snap = await db.collection("rides")
     .where("status", "==", "scheduled")
     .where("scheduledAt", "<=", new Date(now))
-    .limit(20).get();
-  for (const doc of snap.docs) {
+    .limit(8).get();
+  await Promise.all(snap.docs.map(async doc => {
     const data = doc.data();
     const claimed = await db.runTransaction(async tx => {
       const latest = await tx.get(doc.ref);
@@ -117,9 +117,13 @@ export const dispatchScheduledRides = onSchedule({ schedule: "every 1 minutes", 
       return true;
     });
     if (claimed) {
-      try { await performRideSearch(String(data.customerId), doc.id); } catch (e) { /* مسجّل في Cloud Logging */ }
+      try {
+        await performRideSearch(String(data.customerId), doc.id);
+      } catch (error) {
+        console.error("Scheduled ride search failed", doc.id, error);
+      }
     }
-  }
+  }));
 });
 
 async function sendToUser(uid: string | undefined, title: string, body: string, rideId: string) {

@@ -238,18 +238,15 @@ class FirebaseRidesRepository(
             "bookingType" to bookingType, "status" to if (isScheduled) "scheduled" else "searching",
             "searchRadiusMeters" to 500, "searchStage" to 0,
             "scheduledAt" to scheduledAt,
-            "invitedDriverIds" to emptyList<String>(), "selectedDriverId" to null,
+            "invitedDriverIds" to emptyList<String>(),
             "createdAt" to FieldValue.serverTimestamp(), "updatedAt" to FieldValue.serverTimestamp()
         )).await()
         rideRef.collection("private").document("contact").set(mapOf("customerPhone" to customerPhone)).await()
-        // Immediate rides enter server-side matching now; school bookings wait for the scheduler.
-        if (!isScheduled) functions.getHttpsCallable("startRideSearch").call(mapOf("rideId" to rideRef.id))
         return rideRef.id
     }
 
-    suspend fun runSearch(rideId: String, pickup: Coordinate, onStage: (Int, Int) -> Unit) {
+    suspend fun runSearch(rideId: String) {
         functions.getHttpsCallable("startRideSearch").call(mapOf("rideId" to rideId)).await()
-        getRide(rideId)?.let { onStage(it.searchRadiusMeters, 0) }
     }
 
     suspend fun submitOffer(rideId: String, uid: String, driverName: String, price: Int, etaMinutes: Int) {
@@ -294,7 +291,7 @@ class FirebaseRidesRepository(
 
     suspend fun updateRideStatus(rideId: String, actorId: String, newStatus: String) {
         val ref = rides.document(rideId)
-        db.runTransaction { transaction ->
+        val selectedDriverId = db.runTransaction { transaction ->
             val ride = transaction.get(ref)
             val customerId = ride.getString("customerId")
             val driverId = ride.getString("selectedDriverId")
@@ -313,10 +310,12 @@ class FirebaseRidesRepository(
                 check(actorId == driverId || actorId == customerId) { "غير مصرح" }
             }
             transaction.update(ref, "status", newStatus, "updatedAt", FieldValue.serverTimestamp())
-            null
+            driverId
         }.await()
         if (newStatus == "completed" || newStatus == "cancelled") {
-            runCatching { markDriverOffline(actorId) }
+            if (selectedDriverId != null) {
+                runCatching { markDriverOffline(selectedDriverId) }
+            }
         }
     }
 
@@ -397,8 +396,8 @@ class FirebaseRidesRepository(
             })
         }
 
-    fun listenDriverLocation(driverId: String, onChange: (DriverLiveLocation?) -> Unit, onError: (Exception) -> Unit): ListenerRegistration =
-        drivers.document(driverId).addSnapshotListener { snapshot, error ->
+    fun listenDriverLocation(rideId: String, onChange: (DriverLiveLocation?) -> Unit, onError: (Exception) -> Unit): ListenerRegistration =
+        rides.document(rideId).collection("private").document("driverLocation").addSnapshotListener { snapshot, error ->
             if (error != null) onError(error) else if (snapshot?.exists() == true) {
                 onChange(DriverLiveLocation(
                     lat = snapshot.getDouble("lat") ?: return@addSnapshotListener,

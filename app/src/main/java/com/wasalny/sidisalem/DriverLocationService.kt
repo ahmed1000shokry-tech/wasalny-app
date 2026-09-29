@@ -14,6 +14,7 @@ import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationResult
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import com.firebase.geofire.GeoFireUtils
 import com.firebase.geofire.GeoLocation
 
@@ -55,6 +56,28 @@ class DriverLocationService : Service() {
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
+                db.collection("drivers").document(uid).collection("requests")
+                    .whereEqualTo("status", "selected")
+                    .get()
+                    .addOnSuccessListener { requests ->
+                        requests.documents.forEach { request ->
+                            val rideRef = db.collection("rides").document(request.id)
+                            rideRef.get().addOnSuccessListener { rideSnapshot ->
+                                val ride = rideSnapshot.data
+                                val status = ride?.get("status") as? String
+                                if (ride != null && ride["selectedDriverId"] == uid && status in ACTIVE_RIDE_STATUSES) {
+                                    rideRef.collection("private").document("driverLocation").set(
+                                        mapOf(
+                                            "lat" to location.latitude,
+                                            "lon" to location.longitude,
+                                            "updatedAt" to FieldValue.serverTimestamp()
+                                        ),
+                                        SetOptions.merge()
+                                    )
+                                }
+                            }
+                        }
+                    }
             }
         }
         try {
@@ -85,6 +108,7 @@ class DriverLocationService : Service() {
         .build()
 
     companion object {
+        private val ACTIVE_RIDE_STATUSES = listOf("accepted", "driver_arriving", "driver_arrived", "in_progress")
         const val EXTRA_UID = "uid"
         const val EXTRA_NAME = "name"
         private const val CHANNEL_ID = "wasalny_driver_location"

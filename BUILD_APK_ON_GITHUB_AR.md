@@ -6,9 +6,10 @@
 - تأكد أن الملف `.github/workflows/build-apk.yml` موجود.
 
 ## 2) إعداد Firebase
-- فعّل Anonymous Authentication وأنشئ Firestore.
-- انشر قواعد Firestore والفهارس من [FIRESTORE_SETUP_AR.md](FIRESTORE_SETUP_AR.md).
-- لا يحتاج عرض OpenStreetMap إلى مفتاح Google Maps أو GitHub Actions secret للخرائط.
+- فعّل Phone Authentication وأنشئ Firestore، ثم انشر القواعد والفهارس وCloud Functions حسب [FIRESTORE_SETUP_AR.md](FIRESTORE_SETUP_AR.md).
+- لا ترفع `app/google-services.json` إلى Git. أنشئ GitHub Secret باسم `GOOGLE_SERVICES_JSON` وضع فيه محتوى الملف بصيغة Base64؛ على Linux يمكنك توليده باستخدام `base64 -w0 app/google-services.json`.
+- إذا لم يُضبط السر، سيستخدم workflow ملف Firebase مؤقتًا ليكتمل البناء فقط؛ الـ APK الناتج لن يتصل بمشروعك.
+- يستخدم عرض الخرائط OpenStreetMap ولا يحتاج مفتاح Google Maps؛ يلزم إنترنت لتحميل البلاطات.
 - يلزم اتصال إنترنت لتحميل بلاطات الخريطة.
 
 ## 3) تشغيل البناء

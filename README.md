@@ -37,7 +37,8 @@
 
 ```bash
 cd functions
-npm install
+npm ci
+npm run lint
 npm run build
 ```
 
@@ -53,12 +54,13 @@ firebase deploy --only firestore:rules,firestore:indexes,functions
 - فعّل Phone Authentication في Firebase.
 - فعّل Cloud Functions وCloud Scheduler؛ الحجز المسبق والإشعارات يعتمد عليهما.
 - استخدم خطة Blaze لـ Firebase Functions/Scheduler وفق إعدادات مشروعك.
+- لا ترفع `app/google-services.json` إلى Git؛ أضف محتواه Base64 إلى GitHub Secret باسم `GOOGLE_SERVICES_JSON` لبناء نسخة CI متصلة بمشروعك.
 - أضف رقم/حساب المشرف إلى مجموعة `admins` بصلاحية `role=admin` و`active=true`.
 - اختبر التطبيق على جهازين حقيقيين: راكب + سائق، قبل الإطلاق العام.
 - الدفع الإلكتروني غير مفعّل؛ الرحلات الحالية تعتمد على الأجرة النقدية المتفق عليها.
 
 ## حالة الاختبار
 
-تم إجراء فحص ساكن للملفات، JSON/XML، وتناسق حالات الرحلة. بناء Android الكامل لم يُنفذ داخل بيئة الفحص لأن تنزيل Gradle الخارجي غير متاح هنا؛ لذلك GitHub Actions هو اختبار البناء النهائي عند الـPush.
+نجح `assembleDebug` باستخدام Gradle 8.7 وAGP 8.6.1 على JDK 21، ونجحت اختبارات تثبيت واعتماديات Cloud Functions (`npm ci`, lint, build, audit). يجهز GitHub Actions Java 17 وNode 22؛ يجب تأكيد تشغيله على GitHub بعد رفع التغييرات. لم يُشغّل Firebase Emulator أو اختبار جهازين حقيقيين في هذه البيئة.
 
 راجع `AUDIT_REPORT_AR.md` و`PRODUCTION_ARCHITECTURE_AR.md` قبل النشر.

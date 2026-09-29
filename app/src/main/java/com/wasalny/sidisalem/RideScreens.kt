@@ -65,16 +65,19 @@ private fun CustomerRideOffersScreen(rideId: String, customerId: String, nav: Na
         onDispose { regs.forEach { it.remove() } }
     }
 
-    DisposableEffect(ride?.selectedDriverId) {
-        val driverId = ride?.selectedDriverId
-        if (driverId == null) return@DisposableEffect onDispose { }
-        val reg = repository.listenDriverLocation(driverId, { driverLocation = it }, { error = it.localizedMessage })
+    DisposableEffect(ride?.selectedDriverId, ride?.status, rideId) {
+        val currentRide = ride
+        if (currentRide?.selectedDriverId == null || currentRide.status !in listOf("accepted", "driver_arriving", "driver_arrived", "in_progress")) {
+            driverLocation = null
+            return@DisposableEffect onDispose { }
+        }
+        val reg = repository.listenDriverLocation(rideId, { driverLocation = it }, { error = it.localizedMessage })
         onDispose { reg.remove() }
     }
 
     LaunchedEffect(rideId) {
-        // Retry/start the server-side matcher without blocking the UI.
-        runCatching { repository.runSearch(rideId, Coordinate(0.0, 0.0)) { _, _ -> } }
+        runCatching { repository.runSearch(rideId) }
+            .onFailure { error = it.localizedMessage ?: "تعذر بدء البحث عن سائق" }
     }
 
     LaunchedEffect(ride?.status) {
@@ -281,7 +284,11 @@ private fun DriverRideRequestsScreen(driverId: String) {
     DisposableEffect(driverId, approved) {
         if (approved != true) return@DisposableEffect onDispose { }
         val registration = repository.listenDriverRequests(driverId, { requests = it }, { error = it.localizedMessage ?: "تعذر تحميل الطلبات" })
-        onDispose { registration.remove(); scope.launch { runCatching { repository.markDriverOffline(driverId) } } }
+        onDispose {
+            registration.remove()
+            context.stopService(Intent(context, DriverLocationService::class.java))
+            scope.launch { runCatching { repository.markDriverOffline(driverId) } }
+        }
     }
 
     LaunchedEffect(selectedRequest?.rideId) {
