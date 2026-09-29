@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "380603250029",
+    "project_id": "wasalny-app-f5dbb",
+    "storage_bucket": "wasalny-app-f5dbb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:380603250029:android:72014413f4f6d54a249664",
+        "android_client_info": {
+          "package_name": "com.wasalny.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDJKX-KgNwGe3B_QxtEWRnEqXEiL-DzEEg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:380603250029:android:a702ea0565da48fb249664",
+        "android_client_info": {
+          "package_name": "com.wasalny.sidisalem"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDJKX-KgNwGe3B_QxtEWRnEqXEiL-DzEEg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
