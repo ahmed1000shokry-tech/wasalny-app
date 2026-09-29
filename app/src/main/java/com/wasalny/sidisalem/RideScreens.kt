@@ -257,7 +257,6 @@ private fun DriverRideRequestsScreen(driverId: String) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val repository = remember { FirebaseRidesRepository() }
-    val fused = remember { LocationServices.getFusedLocationProviderClient(context) }
     var approved by remember { mutableStateOf<Boolean?>(null) }
     var online by remember { mutableStateOf(false) }
     var locationAllowed by remember { mutableStateOf(hasLocationPermission(context)) }
