@@ -24,14 +24,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Configure Firebase
+        if: ${{ secrets.GOOGLE_SERVICES_JSON != '' }}
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
-          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
-            printf '%s' "$GOOGLE_SERVICES_JSON" | base64 --decode > app/google-services.json
-          else
-            printf '%s\n' '{"project_info":{"project_number":"000000000000","project_id":"wasalny-ci-placeholder"},"client":[{"client_info":{"mobilesdk_app_id":"1:000000000000:android:0000000000000000000000","android_client_info":{"package_name":"com.wasalny.sidisalem"}},"api_key":[{"current_key":"placeholder"}],"services":{}}],"configuration_version":"1"}' > app/google-services.json
-          fi
+          printf '%s' "$GOOGLE_SERVICES_JSON" | base64 --decode > app/google-services.json
 
       - name: Validate Gradle configuration
         run: ./gradlew tasks --no-daemon
