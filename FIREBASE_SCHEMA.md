@@ -20,7 +20,7 @@ Example:
 ```
 
 Notes:
-- role can be `customer`, `driver`, or `admin`
+- role can be `customer` or `driver`; administrator access is stored separately in `admins`
 - customer and driver can share same authentication UID
 
 ## 2. admins
@@ -88,7 +88,6 @@ Example:
 {
   "customerId": "customer123",
   "customerName": "أحمد",
-  "customerPhone": "+966500000000",
   "fromAddress": "ميدان السلام",
   "toAddress": "مركز المدينة",
   "fromLat": 31.24,
@@ -98,11 +97,12 @@ Example:
   "distanceKm": 5.8,
   "femaleMode": false,
   "withLuggage": false,
+  "bookingType": "now",
   "status": "searching",
   "searchRadiusMeters": 500,
   "searchStage": 0,
-  "selectedDriverId": null,
-  "invitedDriverIds": ["driverA", "driverB"],
+  "scheduledAt": null,
+  "invitedDriverIds": [],
   "createdAt": "timestamp",
   "updatedAt": "timestamp"
 }
@@ -110,10 +110,19 @@ Example:
 
 Valid statuses:
 - searching
+- scheduled
 - offered
 - accepted
+- driver_arriving
+- driver_arrived
+- in_progress
+- completed
 - no_drivers
 - cancelled
+
+The search worker adds fields such as `invitedDriverIds`, `searchWorkerActive`, and `searchWorkerStartedAt`. The selected driver and agreed price are stored as `selectedDriverId`, `selectedOfferId`, and `selectedPrice` after an offer is accepted. Scheduled rides use `bookingType: "school"` and a timestamp in `scheduledAt`.
+
+The customer's phone number is stored only in `rides/{rideId}/private/contact`, not in the readable ride document.
 
 ## 5. rides/{rideId}/offers
 

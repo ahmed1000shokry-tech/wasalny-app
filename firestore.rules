@@ -5,6 +5,11 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function validCoordinates(lat, lon) {
+      return lat is number && lat >= -90 && lat <= 90
+        && lon is number && lon >= -180 && lon <= 180;
+    }
+
     function ownsRide(rideId) {
       return signedIn()
         && get(/databases/$(database)/documents/rides/$(rideId)).data.customerId == request.auth.uid;
@@ -78,8 +83,7 @@ service cloud.firestore {
         && request.resource.data.vehicleImageUrl is string
         && request.resource.data.approved == false
         && request.resource.data.available == false
-        && request.resource.data.lat is number
-        && request.resource.data.lon is number
+        && validCoordinates(request.resource.data.lat, request.resource.data.lon)
         && request.resource.data.geohash is string
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
@@ -116,8 +120,7 @@ service cloud.firestore {
               'displayName', 'available', 'lat', 'lon', 'geohash', 'updatedAt'
             ])
             && request.resource.data.available is bool
-            && request.resource.data.lat is number
-            && request.resource.data.lon is number
+            && validCoordinates(request.resource.data.lat, request.resource.data.lon)
             && request.resource.data.geohash is string
             && request.resource.data.updatedAt == request.time
           )
@@ -152,9 +155,20 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.customerId == request.auth.uid
         && request.resource.data.status in ['searching', 'scheduled']
+        && request.resource.data.customerName is string
+        && request.resource.data.fromAddress is string
+        && request.resource.data.toAddress is string
+        && validCoordinates(request.resource.data.fromLat, request.resource.data.fromLon)
+        && validCoordinates(request.resource.data.toLat, request.resource.data.toLon)
+        && request.resource.data.distanceKm is number
+        && request.resource.data.distanceKm > 0
+        && request.resource.data.distanceKm <= 50
+        && request.resource.data.femaleMode is bool
+        && request.resource.data.withLuggage is bool
         && request.resource.data.searchRadiusMeters == 500
         && request.resource.data.searchStage == 0
         && request.resource.data.invitedDriverIds is list
+        && request.resource.data.invitedDriverIds.size() == 0
         && request.resource.data.createdAt == request.time
         && request.resource.data.keys().hasAll([
           'customerId', 'customerName', 'fromAddress', 'toAddress', 'fromLat', 'fromLon',
@@ -184,15 +198,10 @@ service cloud.firestore {
         && (
           (
             resource.data.customerId == request.auth.uid
-            && resource.data.status in ['searching', 'scheduled']
-            && request.resource.data.status in ['offered', 'no_drivers', 'cancelled']
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
-          )
-          || (
-            resource.data.customerId == request.auth.uid
-            && resource.data.status == 'offered'
+            && resource.data.status in ['searching', 'scheduled', 'offered']
             && request.resource.data.status == 'cancelled'
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+            && request.resource.data.updatedAt == request.time
           )
           || (
             resource.data.customerId == request.auth.uid
@@ -206,11 +215,13 @@ service cloud.firestore {
             && request.resource.data.selectedPrice >= 1
             && exists(/databases/$(database)/documents/rides/$(rideId)/offers/$(request.resource.data.selectedOfferId))
             && getAfter(/databases/$(database)/documents/rides/$(rideId)/offers/$(request.resource.data.selectedOfferId)).data.status == 'selected'
+            && getAfter(/databases/$(database)/documents/rides/$(rideId)/offers/$(request.resource.data.selectedOfferId)).data.price == request.resource.data.selectedPrice
           )
           || (
             resource.data.selectedDriverId == request.auth.uid
             && resource.data.status in ['accepted', 'driver_arriving', 'driver_arrived', 'in_progress']
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+            && request.resource.data.updatedAt == request.time
             && (
               (resource.data.status == 'accepted' && request.resource.data.status == 'driver_arriving')
               || (resource.data.status == 'driver_arriving' && request.resource.data.status == 'driver_arrived')
@@ -224,6 +235,7 @@ service cloud.firestore {
             && resource.data.status in ['accepted', 'driver_arriving', 'driver_arrived', 'in_progress']
             && request.resource.data.status == 'cancelled'
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+            && request.resource.data.updatedAt == request.time
           )
         );
 
@@ -263,8 +275,7 @@ service cloud.firestore {
             && get(/databases/$(database)/documents/rides/$(rideId)).data.selectedDriverId == request.auth.uid
             && get(/databases/$(database)/documents/rides/$(rideId)).data.status in ['accepted', 'driver_arriving', 'driver_arrived', 'in_progress']
             && request.resource.data.keys().hasOnly(['lat', 'lon', 'updatedAt'])
-            && request.resource.data.lat is number
-            && request.resource.data.lon is number
+            && validCoordinates(request.resource.data.lat, request.resource.data.lon)
             && request.resource.data.updatedAt == request.time
           )
         );
@@ -287,8 +298,7 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/rides/$(rideId)).data.selectedDriverId == request.auth.uid
           && get(/databases/$(database)/documents/rides/$(rideId)).data.status in ['accepted', 'driver_arriving', 'driver_arrived', 'in_progress']
           && request.resource.data.keys().hasOnly(['lat', 'lon', 'updatedAt'])
-          && request.resource.data.lat is number
-          && request.resource.data.lon is number
+          && validCoordinates(request.resource.data.lat, request.resource.data.lon)
           && request.resource.data.updatedAt == request.time;
         allow list, delete: if false;
       }

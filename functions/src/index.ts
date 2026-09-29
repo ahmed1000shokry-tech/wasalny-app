@@ -174,8 +174,12 @@ export const notifyRideEvents = onDocumentUpdated("rides/{rideId}", async event 
 
 export const heartbeatDriver = onCall({ region: "us-central1" }, async request => {
   const uid = requireAuth(request);
-  const lat = Number(request.data?.lat), lon = Number(request.data?.lon);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new HttpsError("invalid-argument", "إحداثيات غير صالحة");
+  const lat = request.data?.lat, lon = request.data?.lon;
+  if (typeof lat !== "number" || typeof lon !== "number"
+    || !Number.isFinite(lat) || !Number.isFinite(lon)
+    || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    throw new HttpsError("invalid-argument", "إحداثيات غير صالحة");
+  }
   const ref = db.collection("drivers").doc(uid); const snap = await ref.get();
   if (!snap.exists || snap.data()?.approved !== true) throw new HttpsError("permission-denied", "السائق غير معتمد");
   if (snap.data()?.available !== true) return { available: false };

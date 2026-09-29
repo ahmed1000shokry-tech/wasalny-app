@@ -298,6 +298,7 @@ class FirebaseRidesRepository(
             check(actorId == customerId || actorId == driverId) { "غير مصرح" }
             val current = ride.getString("status") ?: ""
             val allowed = when (current) {
+                "searching", "scheduled", "offered" -> newStatus == "cancelled"
                 "accepted" -> newStatus == "driver_arriving" || newStatus == "cancelled"
                 "driver_arriving" -> newStatus == "driver_arrived" || newStatus == "cancelled"
                 "driver_arrived" -> newStatus == "in_progress" || newStatus == "cancelled"
