@@ -1,12 +1,14 @@
 package com.wasalny.sidisalem
 
 import android.app.Activity
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,6 +21,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -31,6 +35,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -168,9 +174,33 @@ fun AdminLoginScreen(onBack: () -> Unit, onSuccess: () -> Unit) {
 
 @Composable
 fun AdminPanel(onLogout: () -> Unit) {
+    var selectedTab by remember { mutableIntStateOf(0) }
+    val tabs = listOf("السائقون", "الاشتراكات", "الرحلات", "التقييمات")
+    Column(Modifier.fillMaxSize().padding(12.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("لوحة المشرف", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            TextButton(onClick = onLogout) { Text("خروج") }
+        }
+        ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 0.dp) {
+            tabs.forEachIndexed { index, title ->
+                Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(title) })
+            }
+        }
+        when (selectedTab) {
+            0 -> AdminDriversTab()
+            1 -> AdminSubscriptionsTab()
+            2 -> AdminRidesTab()
+            3 -> AdminRatingsTab()
+        }
+    }
+}
+
+@Composable
+private fun AdminDriversTab() {
     val repository = remember { FirebaseRidesRepository() }
     val scope = rememberCoroutineScope()
     var drivers by remember { mutableStateOf<List<DriverCandidate>>(emptyList()) }
+    var allDrivers by remember { mutableStateOf<List<DriverApplication>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var selectedDriver by remember { mutableStateOf<DriverCandidate?>(null) }
     var savingUid by remember { mutableStateOf<String?>(null) }
@@ -184,22 +214,19 @@ fun AdminPanel(onLogout: () -> Unit) {
         onDispose { registration.remove() }
     }
 
+    LaunchedEffect(Unit) {
+        runCatching { allDrivers = repository.listAllDrivers() }
+            .onFailure { error = it.localizedMessage ?: "تعذر تحميل قائمة السائقين" }
+    }
+
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("لوحة المشرف", style = MaterialTheme.typography.headlineSmall)
-            TextButton(onClick = onLogout) { Text("خروج") }
-        }
         Text("طلبات السائقين المنتظرين: ${drivers.size}", color = Color.Gray)
         if (error != null) Text(error!!, color = Color(0xFFB3261E))
         Spacer(Modifier.size(12.dp))
         if (drivers.isEmpty()) {
             Text("لا توجد طلبات سائقين جديدة.", color = Color.Gray)
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(drivers, key = { it.uid }) { driver ->
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(12.dp)) {
@@ -217,23 +244,32 @@ fun AdminPanel(onLogout: () -> Unit) {
                                         }
                                     }
                                 ) { Text("مراجعة وقبول") }
-                                OutlinedButton(
-                                    enabled = savingUid == null,
-                                    onClick = {
-                                        savingUid = driver.uid
-                                        scope.launch {
-                                            try {
-                                                repository.setDriverApproval(driver.uid, false)
-                                            } catch (e: Exception) {
-                                                error = e.localizedMessage ?: "تعذر حفظ الرفض"
-                                            } finally {
-                                                savingUid = null
-                                            }
-                                        }
-                                    }
-                                ) { Text("إبقاء مرفوض") }
                             }
+                            OutlinedButton(
+                                enabled = savingUid == null,
+                                onClick = {
+                                    savingUid = driver.uid
+                                    scope.launch {
+                                        try {
+                                            repository.requestDriverMoreData(driver.uid, "يرجى استكمال البيانات والصور المطلوبة ثم إعادة إرسال الطلب.")
+                                        } catch (e: Exception) {
+                                            error = e.localizedMessage ?: "تعذر إرسال طلب الاستكمال"
+                                        } finally { savingUid = null }
+                                    }
+                                }
+                            ) { Text("طلب استكمال البيانات") }
                         }
+                    }
+                }
+            }
+        }
+        Text("السائقون المعتمدون", fontWeight = FontWeight.Bold)
+        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(allDrivers.filter { it.approved }, key = { "approved-${it.uid}" }) { driver ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(10.dp)) {
+                        Text(driver.name, fontWeight = FontWeight.Medium)
+                        Text("${driver.phone} • ${driver.vehicleType}", color = Color.Gray)
                     }
                 }
             }
@@ -268,6 +304,7 @@ fun AdminPanel(onLogout: () -> Unit) {
                         scope.launch {
                             try {
                                 repository.setDriverApproval(driver.uid, true)
+                                allDrivers = repository.listAllDrivers()
                                 selectedDriver = null
                                 driverDetails = null
                             } catch (e: Exception) {
@@ -285,5 +322,141 @@ fun AdminPanel(onLogout: () -> Unit) {
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun AdminSubscriptionsTab() {
+    val repository = remember { FirebaseRidesRepository() }
+    val scope = rememberCoroutineScope()
+    var pending by remember { mutableStateOf<List<SubscriptionRequest>>(emptyList()) }
+    var busyId by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var proofRequest by remember { mutableStateOf<SubscriptionRequest?>(null) }
+    var proofBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+
+    suspend fun refresh() {
+        pending = repository.listPendingSubscriptions()
+    }
+    LaunchedEffect(Unit) {
+        runCatching { refresh() }.onFailure { error = it.localizedMessage ?: "تعذر تحميل الاشتراكات" }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Text("طلبات اشتراك السائقين", fontWeight = FontWeight.Bold)
+        Text("١٠٠ جنيه لأول شهر • ٢٠٠ جنيه للتجديد", color = Color.Gray)
+        if (error != null) Text(error!!, color = Color(0xFFB3261E))
+        if (pending.isEmpty()) Text("لا توجد طلبات اشتراك قيد المراجعة.", color = Color.Gray)
+        else LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(pending, key = { it.id }) { subscription ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(subscription.driverName, fontWeight = FontWeight.Bold)
+                        Text("${subscription.amount} جنيه • شهر واحد")
+                        if (subscription.note.isNotBlank()) Text(subscription.note, color = Color.Gray)
+                        OutlinedButton(enabled = busyId == null, onClick = {
+                            proofRequest = subscription
+                            proofBitmap = null
+                            scope.launch {
+                                runCatching {
+                                    val bytes = repository.getSubscriptionProof(subscription.proofPath)
+                                    proofBitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                                }.onFailure { error = it.localizedMessage ?: "تعذر تحميل صورة الإثبات" }
+                            }
+                        }) { Text("معاينة صورة التحويل") }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(enabled = busyId == null, onClick = {
+                                busyId = subscription.id
+                                scope.launch {
+                                    try { repository.reviewSubscriptionRequest(subscription.id, true); refresh() }
+                                    catch (e: Exception) { error = e.localizedMessage ?: "تعذر اعتماد الاشتراك" }
+                                    finally { busyId = null }
+                                }
+                            }) { Text("قبول وتجديد") }
+                            OutlinedButton(enabled = busyId == null, onClick = {
+                                busyId = subscription.id
+                                scope.launch {
+                                    try { repository.reviewSubscriptionRequest(subscription.id, false); refresh() }
+                                    catch (e: Exception) { error = e.localizedMessage ?: "تعذر رفض الاشتراك" }
+                                    finally { busyId = null }
+                                }
+                            }) { Text("رفض") }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    proofRequest?.let { selected ->
+        AlertDialog(
+            onDismissRequest = { proofRequest = null },
+            title = { Text("إثبات التحويل • ${selected.driverName}") },
+            text = {
+                proofBitmap?.let { Image(it, contentDescription = "صورة إثبات التحويل", modifier = Modifier.fillMaxWidth().height(320.dp)) }
+                    ?: CircularProgressIndicator()
+            },
+            confirmButton = { TextButton(onClick = { proofRequest = null }) { Text("إغلاق") } }
+        )
+    }
+}
+
+@Composable
+private fun AdminRidesTab() {
+    val repository = remember { FirebaseRidesRepository() }
+    var recentRides by remember { mutableStateOf<List<RideRecord>>(emptyList()) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        runCatching { recentRides = repository.listRecentRides(50) }
+            .onFailure { error = it.localizedMessage ?: "تعذر تحميل الرحلات" }
+    }
+    Column(Modifier.fillMaxSize()) {
+        Text("آخر الرحلات", fontWeight = FontWeight.Bold)
+        if (error != null) Text(error!!, color = Color(0xFFB3261E))
+        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(recentRides, key = { it.id }) { ride ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(10.dp)) {
+                        Text("${ride.from} → ${ride.to}", fontWeight = FontWeight.Medium)
+                        val status = when (ride.status) {
+                            "completed" -> "مكتملة"
+                            "cancelled" -> "ملغاة"
+                            "accepted" -> "مقبولة"
+                            "searching" -> "جارٍ البحث"
+                            "in_progress" -> "جارية"
+                            else -> ride.status
+                        }
+                        Text("$status • %.1f كم • ${ride.selectedPrice?.let { "$it ج" } ?: "—"}", color = Color.Gray)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdminRatingsTab() {
+    val repository = remember { FirebaseRidesRepository() }
+    var ratings by remember { mutableStateOf<List<RatingRecord>>(emptyList()) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        runCatching { ratings = repository.listRecentRatings(40) }
+            .onFailure { error = it.localizedMessage ?: "تعذر تحميل التقييمات" }
+    }
+    Column(Modifier.fillMaxSize()) {
+        Text("آخر التقييمات", fontWeight = FontWeight.Bold)
+        if (error != null) Text(error!!, color = Color(0xFFB3261E))
+        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(ratings, key = { it.id }) { rating ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(10.dp)) {
+                        val stars = rating.stars.coerceIn(0, 5)
+                        Text("${"★".repeat(stars)}${"☆".repeat(5 - stars)}  $stars/5", fontWeight = FontWeight.Bold)
+                        if (rating.comment.isNotBlank()) Text(rating.comment)
+                        Text("رحلة ${rating.rideId.take(8)}…", color = Color.Gray)
+                    }
+                }
+            }
+        }
     }
 }

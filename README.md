@@ -1,4 +1,4 @@
-# وصلني توكتوك — V5.1.0
+# وصلني توكتوك — V5.2.2
 
 منصة حجز توكتوك لسيدي سالم، مبنية على Android + Firebase، مع فصل واضح بين الراكب والسائق والإدارة.
 
@@ -18,6 +18,17 @@
 - إدارة طلبات السائقين من لوحة المشرف.
 - GitHub Actions لفحص وبناء Android وCloud Functions.
 - تنظيف أسرار التوقيع وعدم تضمين ملفات keystore في Git.
+
+## ميزات V5.2.2
+
+- أفضل خمسة عروض للراكب وإغلاق طلبات السائقين الآخرين عند قبول عرض.
+- اشتراك السائق: 100 جنيه لأول شهر و200 جنيه للتجديد، مع إثبات تحويل مصور خاص يراجعه المشرف.
+- فرض الاشتراك النشط على ظهور السائق وقبوله للعروض، وإحصاءات السائق والراكب.
+- إيقاف طلب الرحلات 24 ساعة بعد أكثر من 3 إلغاءات في اليوم.
+- لوحة المشرف: السائقون واستكمال البيانات والاشتراكات والرحلات والتقييمات.
+- موافقة شروط مؤرخة لكل حساب وزر طلب رحلة مباشر للراكب.
+
+تُحوّل رسوم الاشتراك إلى 01069631950. الشروط الحالية صياغة تشغيلية أولية وتحتاج اعتمادًا قانونيًا ومراجعة سياسة الخصوصية قبل الإطلاق العام.
 
 ## المجلدات
 
@@ -46,8 +57,10 @@ npm run build
 
 ```bash
 firebase use wasalny-app-f5dbb
-firebase deploy --only firestore:rules,firestore:indexes,functions
+firebase deploy --only firestore:rules,firestore:indexes,storage,functions
 ```
+
+فعّل Firebase Storage وأنشئ bucket للمشروع قبل رفع صور التحويل. الإيصالات خاصة ولا تتجاوز 5 ميجابايت؛ راجع `DEPLOY_FIREBASE_AR.md` لخطوات النشر.
 
 ## متطلبات الإنتاج
 
@@ -61,6 +74,6 @@ firebase deploy --only firestore:rules,firestore:indexes,functions
 
 ## حالة الاختبار
 
-نجح `assembleDebug` باستخدام Gradle 8.7 وAGP 8.6.1 على JDK 21، ونجحت اختبارات تثبيت واعتماديات Cloud Functions (`npm ci`, lint, build, audit). يجهز GitHub Actions Java 17 وNode 22؛ يجب تأكيد تشغيله على GitHub بعد رفع التغييرات. لم يُشغّل Firebase Emulator أو اختبار جهازين حقيقيين في هذه البيئة.
+نجح `npm run build` لوظائف Cloud Functions، وحمّلت محاكيات Firestore وStorage القواعد دون أخطاء صياغة، ونجح `gradlew help`. لم يكتمل `assembleDebug` لعدم توفر Android SDK في بيئة العمل. لم يُنشر Firebase ولم يُختبر التطبيق على جهازين حقيقيين.
 
 راجع `AUDIT_REPORT_AR.md` و`PRODUCTION_ARCHITECTURE_AR.md` قبل النشر.

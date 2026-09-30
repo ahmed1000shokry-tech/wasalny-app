@@ -57,26 +57,21 @@ class DriverLocationService : Service() {
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
-                db.collection("drivers").document(uid).collection("requests")
-                    .whereEqualTo("status", "selected")
+                db.collection("rides")
+                    .whereEqualTo("selectedDriverId", uid)
+                    .whereIn("status", ACTIVE_RIDE_STATUSES)
+                    .limit(10)
                     .get()
-                    .addOnSuccessListener { requests ->
-                        requests.documents.forEach { request ->
-                            val rideRef = db.collection("rides").document(request.id)
-                            rideRef.get().addOnSuccessListener { rideSnapshot ->
-                                val ride = rideSnapshot.data
-                                val status = ride?.get("status") as? String
-                                if (ride != null && ride["selectedDriverId"] == uid && status in ACTIVE_RIDE_STATUSES) {
-                                    rideRef.collection("private").document("driverLocation").set(
-                                        mapOf(
-                                            "lat" to location.latitude,
-                                            "lon" to location.longitude,
-                                            "updatedAt" to FieldValue.serverTimestamp()
-                                        ),
-                                        SetOptions.merge()
-                                    )
-                                }
-                            }
+                    .addOnSuccessListener { activeRides ->
+                        activeRides.documents.forEach { ride ->
+                            ride.reference.collection("private").document("driverLocation").set(
+                                mapOf(
+                                    "lat" to location.latitude,
+                                    "lon" to location.longitude,
+                                    "updatedAt" to FieldValue.serverTimestamp()
+                                ),
+                                SetOptions.merge()
+                            )
                         }
                     }
             }

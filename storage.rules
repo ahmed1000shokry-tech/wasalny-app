@@ -1,0 +1,28 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      let adminPath = /databases/(default)/documents/admins/$(request.auth.uid);
+      return signedIn()
+        && firestore.get(adminPath).data.role == 'admin'
+        && firestore.get(adminPath).data.active == true;
+    }
+
+    match /subscriptionProofs/{driverId}/{requestId} {
+      allow create: if signedIn()
+        && request.auth.uid == driverId
+        && request.resource.size > 0
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow get: if signedIn() && (request.auth.uid == driverId || isAdmin());
+      allow delete: if signedIn()
+        && request.auth.uid == driverId
+        && !firestore.exists(/databases/(default)/documents/subscriptionRequests/$(requestId));
+      allow list, update: if false;
+    }
+  }
+}

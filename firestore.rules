@@ -21,6 +21,17 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/drivers/$(uid)).data.approved == true;
     }
 
+    function subscribedDriver(uid) {
+      let driverPath = /databases/$(database)/documents/drivers/$(uid);
+      return approvedDriver(uid)
+        && (
+          (get(driverPath).data.subscriptionExpiresAt is timestamp
+            && get(driverPath).data.subscriptionExpiresAt > request.time)
+          || (get(driverPath).data.subscriptionExpiresAt is int
+            && get(driverPath).data.subscriptionExpiresAt > request.time.toMillis())
+        );
+    }
+
     function hasRideRequest(uid, rideId) {
       return exists(/databases/$(database)/documents/drivers/$(uid)/requests/$(rideId));
     }
@@ -30,6 +41,16 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
         && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin'
         && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true;
+    }
+
+    function notBanned(uid) {
+      let userPath = /databases/$(database)/documents/users/$(uid);
+      return !exists(userPath)
+        || !get(userPath).data.keys().hasAny(['banUntil'])
+        || (get(userPath).data.banUntil is timestamp
+          && get(userPath).data.banUntil <= request.time)
+        || (get(userPath).data.banUntil is int
+          && get(userPath).data.banUntil <= request.time.toMillis());
     }
 
     match /admins/{adminId} {
@@ -50,7 +71,8 @@ service cloud.firestore {
         && request.resource.data.updatedAt == request.time;
       allow update: if signedIn()
         && request.auth.uid == userId
-        && request.resource.data.keys().hasOnly(['uid', 'role', 'name', 'phone', 'fcmToken', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['uid', 'role', 'name', 'phone', 'fcmToken', 'updatedAt', 'banUntil'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'name', 'phone', 'fcmToken', 'updatedAt'])
         && request.resource.data.uid == userId
         && request.resource.data.role in ['customer', 'driver']
         && request.resource.data.name is string
@@ -58,6 +80,11 @@ service cloud.firestore {
         && (!request.resource.data.keys().hasAny(['fcmToken']) || request.resource.data.fcmToken is string)
         && request.resource.data.updatedAt == request.time;
       allow list, delete: if false;
+
+      match /cancels/{day} {
+        allow get: if signedIn() && request.auth.uid == userId;
+        allow list, create, update, delete: if false;
+      }
     }
 
     match /drivers/{driverId} {
@@ -98,9 +125,13 @@ service cloud.firestore {
             && request.resource.data.available == false
             && request.resource.data.uid == resource.data.uid
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'displayName', 'phone', 'licenseType', 'vehicleType',
+              'displayName', 'phone', 'licenseType', 'vehicleType', 'needsMoreData', 'adminMessage',
               'idCardImageUrl', 'vehicleImageUrl', 'updatedAt'
             ])
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['needsMoreData'])
+              || request.resource.data.needsMoreData == false)
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['adminMessage'])
+              || (resource.data.needsMoreData == true && request.resource.data.adminMessage == ''))
             && request.resource.data.displayName is string
             && request.resource.data.phone is string
             && request.resource.data.licenseType is string
@@ -120,6 +151,11 @@ service cloud.firestore {
               'displayName', 'available', 'lat', 'lon', 'geohash', 'updatedAt'
             ])
             && request.resource.data.available is bool
+            && (!request.resource.data.available
+              || ((resource.data.subscriptionExpiresAt is timestamp
+                  && resource.data.subscriptionExpiresAt > request.time)
+                || (resource.data.subscriptionExpiresAt is int
+                  && resource.data.subscriptionExpiresAt > request.time.toMillis())))
             && validCoordinates(request.resource.data.lat, request.resource.data.lon)
             && request.resource.data.geohash is string
             && request.resource.data.updatedAt == request.time
@@ -129,10 +165,14 @@ service cloud.firestore {
           (
             isAdmin()
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'approved', 'available', 'updatedAt'
+              'approved', 'available', 'updatedAt', 'needsMoreData', 'adminMessage'
             ])
             && request.resource.data.approved is bool
             && request.resource.data.available == false
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['needsMoreData'])
+              || request.resource.data.needsMoreData is bool)
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['adminMessage'])
+              || request.resource.data.adminMessage is string)
             && request.resource.data.updatedAt == request.time
           )
         );
@@ -154,6 +194,7 @@ service cloud.firestore {
     match /rides/{rideId} {
       allow create: if signedIn()
         && request.resource.data.customerId == request.auth.uid
+        && notBanned(request.auth.uid)
         && request.resource.data.status in ['searching', 'scheduled']
         && request.resource.data.customerName is string
         && request.resource.data.fromAddress is string
@@ -185,25 +226,22 @@ service cloud.firestore {
 
       allow get: if signedIn() && (
         resource.data.customerId == request.auth.uid
-        || (approvedDriver(request.auth.uid)
+        || (subscribedDriver(request.auth.uid)
           && resource.data.status == 'searching'
           && hasRideRequest(request.auth.uid, rideId))
         || (resource.data.status in ['accepted', 'driver_arriving', 'driver_arrived', 'in_progress']
           && resource.data.selectedDriverId == request.auth.uid)
       );
 
-      allow list: if signedIn() && resource.data.customerId == request.auth.uid;
+      allow list: if signedIn() && (
+        isAdmin()
+        || resource.data.customerId == request.auth.uid
+        || resource.data.selectedDriverId == request.auth.uid
+      );
 
       allow update: if signedIn()
         && (
           (
-            resource.data.customerId == request.auth.uid
-            && resource.data.status in ['searching', 'scheduled', 'offered']
-            && request.resource.data.status == 'cancelled'
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
-            && request.resource.data.updatedAt == request.time
-          )
-          || (
             resource.data.customerId == request.auth.uid
             && resource.data.status in ['searching', 'offered']
             && request.resource.data.status == 'accepted'
@@ -230,19 +268,13 @@ service cloud.firestore {
               || (resource.data.status in ['accepted', 'driver_arriving', 'driver_arrived'] && request.resource.data.status == 'cancelled')
             )
           )
-          || (
-            resource.data.customerId == request.auth.uid
-            && resource.data.status in ['accepted', 'driver_arriving', 'driver_arrived', 'in_progress']
-            && request.resource.data.status == 'cancelled'
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
-            && request.resource.data.updatedAt == request.time
-          )
         );
 
       match /ratings/{raterId} {
         allow get: if signedIn() && (
           ownsRide(rideId) ||
-          get(/databases/$(database)/documents/rides/$(rideId)).data.selectedDriverId == request.auth.uid
+          get(/databases/$(database)/documents/rides/$(rideId)).data.selectedDriverId == request.auth.uid ||
+          isAdmin()
         );
         allow create: if signedIn()
           && request.auth.uid == raterId
@@ -259,7 +291,8 @@ service cloud.firestore {
           && request.resource.data.comment is string
           && request.resource.data.comment.size() <= 300
           && request.resource.data.createdAt == request.time;
-        allow update, delete, list: if false;
+        allow list: if isAdmin();
+        allow update, delete: if false;
       }
 
       match /private/{privateId} {
@@ -310,7 +343,7 @@ service cloud.firestore {
 
         allow create: if signedIn()
           && request.auth.uid == driverId
-          && approvedDriver(driverId)
+          && subscribedDriver(driverId)
           && hasRideRequest(driverId, rideId)
           && get(/databases/$(database)/documents/rides/$(rideId)).data.status == 'searching'
           && request.resource.data.driverId == driverId
@@ -334,6 +367,16 @@ service cloud.firestore {
 
         allow delete: if false;
       }
+    }
+
+    match /subscriptionRequests/{requestId} {
+      allow get: if signedIn() && (
+        isAdmin() || resource.data.driverId == request.auth.uid
+      );
+      allow list: if signedIn() && (
+        isAdmin() || resource.data.driverId == request.auth.uid
+      );
+      allow create, update, delete: if false;
     }
   }
 }

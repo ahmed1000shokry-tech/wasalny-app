@@ -9,11 +9,17 @@
 
 ```sh
 firebase login
-firebase use default
-firebase deploy --only firestore:rules,firestore:indexes,functions
+firebase use wasalny-app-f5dbb
+firebase deploy --only firestore:rules,firestore:indexes,storage,functions
 ```
 
 لا تستخدم قواعد `allow read, write: if true`؛ القواعد الموجودة هنا تمنع الوصول غير المصرح به.
+
+## إثبات اشتراك السائق
+
+فعّل Firebase Storage وأنشئ bucket للمشروع قبل الرفع. صور JPG/PNG/WEBP حتى 5 ميجابايت تحفظ في مسار خاص بالسائق؛ يستطيع السائق قراءة إثباته، والمشرف الموثق فقط يستطيع معاينته. أرسل أول طلب بقيمة 100 جنيه، والتجديد 200 جنيه، على 01069631950. مراجعة وصول التحويل يدوية.
+
+حسابات السائقين المعتمدة الحالية التي لا تملك سجل اشتراك ستُعامل كاشتراك أول. لن تستقبل طلبات حتى اعتماد أول إثبات، ثم يتطلب التجديد مبلغ 200 جنيه.
 
 ## اعتماد السائق
 

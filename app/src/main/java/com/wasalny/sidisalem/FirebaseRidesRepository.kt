@@ -1,5 +1,6 @@
 package com.wasalny.sidisalem
 
+import android.net.Uri
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
@@ -8,6 +9,8 @@ import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.storage.FirebaseStorage
+import com.google.firebase.storage.StorageMetadata
 import kotlinx.coroutines.tasks.await
 
 /**
@@ -51,7 +54,8 @@ data class DriverRideRequest(
     val fromLon: Double,
     val distanceKm: Double,
     val radiusMeters: Int,
-    val status: String
+    val status: String,
+    val createdAt: Long? = null
 )
 
 data class DriverCandidate(
@@ -72,12 +76,42 @@ data class DriverApplication(
     val vehicleType: String,
     val idCardImageUrl: String = "",
     val vehicleImageUrl: String = "",
+    val profileImageUrl: String = "",
     val approved: Boolean = false,
+    val needsMoreData: Boolean = false,
+    val adminMessage: String = "",
     val createdAt: Long? = null,
     val updatedAt: Long? = null
 )
 
 data class DriverLiveLocation(val lat: Double, val lon: Double, val updatedAt: Long?)
+
+data class SubscriptionRequest(
+    val id: String,
+    val driverId: String,
+    val driverName: String,
+    val amount: Int,
+    val months: Int,
+    val proofPath: String,
+    val note: String,
+    val status: String
+)
+
+data class DriverSubscription(val active: Boolean, val expiresAt: Long?, val plan: String, val daysLeft: Int)
+
+data class DriverStats(val completedRides: Int, val averageRating: Double, val totalEarnings: Int, val ratingCount: Int)
+
+data class CustomerStats(
+    val totalRides: Int,
+    val completedRides: Int,
+    val cancelledRides: Int,
+    val cancelsToday: Int,
+    val banUntil: Long?
+) {
+    val isBanned: Boolean get() = banUntil != null && banUntil > System.currentTimeMillis()
+}
+
+data class RatingRecord(val id: String, val rideId: String, val raterId: String, val stars: Int, val comment: String)
 
 class FirebaseRidesRepository(
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance(),
@@ -85,6 +119,7 @@ class FirebaseRidesRepository(
 ) {
     private val rides get() = db.collection("rides")
     private val drivers get() = db.collection("drivers")
+    private val storage get() = FirebaseStorage.getInstance()
 
     suspend fun isAdmin(uid: String): Boolean {
         val admin = db.collection("admins").document(uid).get().await()
@@ -154,25 +189,56 @@ class FirebaseRidesRepository(
             ),
             "updatedAt" to FieldValue.serverTimestamp()
         )
+        if (existing.getBoolean("needsMoreData") == true) {
+            payload["needsMoreData"] = false
+            payload["adminMessage"] = ""
+        }
         if (!existing.exists()) payload["createdAt"] = FieldValue.serverTimestamp()
         ref.set(payload, SetOptions.merge()).await()
     }
 
     suspend fun getDriverApplication(uid: String): DriverApplication? =
-        drivers.document(uid).get().await().takeIf { it.exists() }?.let { snapshot ->
-            DriverApplication(
-                uid = snapshot.id,
-                name = snapshot.getString("displayName") ?: "",
-                phone = snapshot.getString("phone") ?: "",
-                licenseType = snapshot.getString("licenseType") ?: "غير محدد",
-                vehicleType = snapshot.getString("vehicleType") ?: "غير محدد",
-                idCardImageUrl = snapshot.getString("idCardImageUrl") ?: "",
-                vehicleImageUrl = snapshot.getString("vehicleImageUrl") ?: "",
-                approved = snapshot.getBoolean("approved") == true,
-                createdAt = snapshot.getTimestamp("createdAt")?.toDate()?.time,
-                updatedAt = snapshot.getTimestamp("updatedAt")?.toDate()?.time
+        drivers.document(uid).get().await().takeIf { it.exists() }?.toDriverApplication()
+
+    fun listenDriverApplication(
+        uid: String,
+        onChange: (DriverApplication?) -> Unit,
+        onError: (Exception) -> Unit
+    ): ListenerRegistration = drivers.document(uid).addSnapshotListener { snapshot, error ->
+        if (error != null) onError(error)
+        else onChange(snapshot?.takeIf { it.exists() }?.toDriverApplication())
+    }
+
+    suspend fun requestDriverMoreData(uid: String, message: String) {
+        require(message.trim().isNotEmpty()) { "اكتب البيانات المطلوبة من السائق" }
+        drivers.document(uid).update(
+            mapOf(
+                "needsMoreData" to true,
+                "adminMessage" to message.trim().take(300),
+                "available" to false,
+                "updatedAt" to FieldValue.serverTimestamp()
             )
-        }
+        ).await()
+    }
+
+    suspend fun listAllDrivers(limit: Int = 80): List<DriverApplication> = runCatching {
+        drivers.orderBy("createdAt", Query.Direction.DESCENDING).limit(limit.toLong()).get().await().documents
+    }.getOrElse { drivers.limit(limit.toLong()).get().await().documents }.map { snapshot ->
+        DriverApplication(
+            uid = snapshot.id,
+            name = snapshot.getString("displayName") ?: "",
+            phone = snapshot.getString("phone") ?: "",
+            licenseType = snapshot.getString("licenseType") ?: "",
+            vehicleType = snapshot.getString("vehicleType") ?: "",
+            idCardImageUrl = snapshot.getString("idCardImageUrl") ?: "",
+            vehicleImageUrl = snapshot.getString("vehicleImageUrl") ?: "",
+            profileImageUrl = snapshot.getString("profileImageUrl") ?: "",
+            approved = snapshot.getBoolean("approved") == true,
+            needsMoreData = snapshot.getBoolean("needsMoreData") == true,
+            adminMessage = snapshot.getString("adminMessage") ?: "",
+            createdAt = snapshot.getTimestamp("createdAt")?.toDate()?.time
+        )
+    }
 
     suspend fun ensureDriverProfile(uid: String, name: String) {
         val ref = drivers.document(uid)
@@ -192,6 +258,9 @@ class FirebaseRidesRepository(
         val ref = drivers.document(uid)
         val snapshot = ref.get().await()
         check(snapshot.getBoolean("approved") == true) { "السائق غير معتمد" }
+        if (available) check(getDriverSubscription(uid).active) {
+            "الاشتراك غير نشط. حوّل رسوم الاشتراك عبر فودافون كاش على 01069631950."
+        }
         ref.update("available", available, "updatedAt", FieldValue.serverTimestamp()).await()
     }
 
@@ -226,6 +295,7 @@ class FirebaseRidesRepository(
         scheduledAt: Long? = null
     ): String {
         require(distanceKm > 0.0 && distanceKm <= 50.0) { "مسافة الرحلة غير صالحة" }
+        assertCustomerNotBanned(customerId)
         val rideRef = rides.document()
         val isScheduled = bookingType == "school" && scheduledAt != null && scheduledAt > System.currentTimeMillis()
         if (bookingType == "school") require(scheduledAt != null && scheduledAt > System.currentTimeMillis() + 5 * 60_000) { "موعد الحجز يجب أن يكون بعد 5 دقائق على الأقل" }
@@ -276,15 +346,19 @@ class FirebaseRidesRepository(
             val request = transaction.get(requestRef)
             check(ride.getString("customerId") == customerId) { "هذه الرحلة ليست لحسابك" }
             check(ride.getString("status") in listOf("searching", "offered")) { "لم تعد الرحلة متاحة" }
-            check(offer.getString("status") == "pending") { "هذا العرض لم يعد متاحاً" }
-            check(request.getString("status") == "searching") { "دعوة السائق لم تعد متاحة" }
+            check(offer.exists() && offer.getString("status") == "pending") { "هذا العرض لم يعد متاحاً" }
+            val price = offer.getLong("price")
+            check(price != null && price >= 1) { "سعر العرض غير صالح" }
+            if (request.exists()) {
+                check(request.getString("status") in listOf("searching", "pending")) { "دعوة السائق لم تعد متاحة" }
+            }
             transaction.update(rideRef, mapOf(
                 "status" to "accepted", "selectedDriverId" to driverId,
-                "selectedOfferId" to driverId, "selectedPrice" to offer.getLong("price"),
+                "selectedOfferId" to driverId, "selectedPrice" to price,
                 "updatedAt" to FieldValue.serverTimestamp()
             ))
             transaction.update(offerRef, "status", "selected")
-            transaction.update(requestRef, "status", "selected")
+            if (request.exists()) transaction.update(requestRef, "status", "selected")
             null
         }.await()
     }
@@ -320,7 +394,10 @@ class FirebaseRidesRepository(
         }
     }
 
-    suspend fun cancelRide(rideId: String, customerId: String) = updateRideStatus(rideId, customerId, "cancelled")
+    suspend fun cancelRide(rideId: String, customerId: String) {
+        check(FirebaseAuth.getInstance().currentUser?.uid == customerId) { "غير مصرح" }
+        functions.getHttpsCallable("cancelCustomerRide").call(mapOf("rideId" to rideId)).await()
+    }
 
     suspend fun submitRating(rideId: String, raterId: String, stars: Int, comment: String = "") {
         require(stars in 1..5) { "التقييم من 1 إلى 5 نجوم" }
@@ -366,7 +443,9 @@ class FirebaseRidesRepository(
             }
 
     fun listenDriverRequests(driverId: String, onChange: (List<DriverRideRequest>) -> Unit, onError: (Exception) -> Unit): ListenerRegistration =
-        drivers.document(driverId).collection("requests").addSnapshotListener { snapshot, error ->
+        drivers.document(driverId).collection("requests")
+            .orderBy("createdAt", Query.Direction.DESCENDING).limit(50)
+            .addSnapshotListener { snapshot, error ->
             if (error != null) onError(error) else onChange(snapshot?.documents.orEmpty().mapNotNull { doc ->
                 DriverRideRequest(
                     rideId = doc.id, from = doc.getString("fromAddress") ?: "", to = doc.getString("toAddress") ?: "",
@@ -374,7 +453,8 @@ class FirebaseRidesRepository(
                     fromLon = doc.getDouble("fromLon") ?: return@mapNotNull null,
                     distanceKm = doc.getDouble("distanceKm") ?: 0.0,
                     radiusMeters = (doc.getLong("radiusMeters") ?: 500L).toInt(),
-                    status = doc.getString("status") ?: "closed"
+                    status = doc.getString("status") ?: "closed",
+                    createdAt = doc.getTimestamp("createdAt")?.toDate()?.time
                 )
             })
         }
@@ -416,10 +496,178 @@ class FirebaseRidesRepository(
     suspend fun getDriverAvailability(uid: String): Boolean =
         drivers.document(uid).get().await().getBoolean("available") == true
 
+    fun listenDriverAvailability(uid: String, onChange: (Boolean) -> Unit, onError: (Exception) -> Unit): ListenerRegistration =
+        drivers.document(uid).addSnapshotListener { snapshot, error ->
+            if (error != null) onError(error) else onChange(snapshot?.getBoolean("available") == true)
+        }
+
+    suspend fun assertCustomerNotBanned(customerId: String) {
+        val user = db.collection("users").document(customerId).get().await()
+        val banUntil = user.getTimestamp("banUntil")?.toDate()?.time ?: user.getLong("banUntil")
+        check(banUntil == null || banUntil <= System.currentTimeMillis()) {
+            "حسابك موقوف مؤقتًا بسبب تكرار إلغاء الرحلات. حاول بعد انتهاء الإيقاف."
+        }
+    }
+
+    suspend fun getDriverSubscription(uid: String): DriverSubscription {
+        val snapshot = drivers.document(uid).get().await()
+        val expiry = snapshot.getTimestamp("subscriptionExpiresAt")?.toDate()?.time
+            ?: snapshot.getLong("subscriptionExpiresAt")
+        val active = expiry != null && expiry > System.currentTimeMillis()
+        return DriverSubscription(
+            active = active,
+            expiresAt = expiry,
+            plan = snapshot.getString("subscriptionPlan") ?: "none",
+            daysLeft = if (active) (((expiry!! - System.currentTimeMillis()) / 86_400_000L).toInt() + 1) else 0
+        )
+    }
+
+    suspend fun submitSubscriptionRequest(driverId: String, image: Uri, contentType: String, note: String): SubscriptionRequest {
+        require(contentType in listOf("image/jpeg", "image/png", "image/webp")) { "اختر صورة JPG أو PNG أو WEBP" }
+        val requestRef = db.collection("subscriptionRequests").document()
+        val proofPath = "subscriptionProofs/$driverId/${requestRef.id}"
+        val proofRef = storage.reference.child(proofPath)
+        proofRef.putFile(image, StorageMetadata.Builder().setContentType(contentType).build()).await()
+        try {
+            val result = functions.getHttpsCallable("submitSubscriptionRequest").call(
+                mapOf("requestId" to requestRef.id, "proofPath" to proofPath, "note" to note.trim().take(300))
+            ).await()
+            val amount = ((result.data as? Map<*, *>)?.get("amount") as? Number)?.toInt()
+                ?: error("تعذر تحديد مبلغ الاشتراك")
+            val driverName = drivers.document(driverId).get().await().getString("displayName") ?: "سائق"
+            return SubscriptionRequest(requestRef.id, driverId, driverName, amount, 1, proofPath, note.trim(), "pending")
+        } catch (error: Exception) {
+            runCatching { proofRef.delete().await() }
+            throw error
+        }
+    }
+
+    suspend fun listPendingSubscriptions(): List<SubscriptionRequest> = db.collection("subscriptionRequests")
+        .whereEqualTo("status", "pending").limit(50).get().await().documents.map { document ->
+            SubscriptionRequest(
+                id = document.id,
+                driverId = document.getString("driverId") ?: "",
+                driverName = document.getString("driverName") ?: "سائق",
+                amount = (document.getLong("amount") ?: 0L).toInt(),
+                months = (document.getLong("months") ?: 1L).toInt(),
+                proofPath = document.getString("proofPath") ?: "",
+                note = document.getString("note") ?: "",
+                status = document.getString("status") ?: "pending"
+            )
+        }
+
+    suspend fun getPendingSubscription(driverId: String): SubscriptionRequest? = db.collection("subscriptionRequests")
+        .whereEqualTo("driverId", driverId).whereEqualTo("status", "pending").limit(1).get().await()
+        .documents.firstOrNull()?.let { document ->
+            SubscriptionRequest(
+                id = document.id,
+                driverId = driverId,
+                driverName = document.getString("driverName") ?: "سائق",
+                amount = (document.getLong("amount") ?: 0L).toInt(),
+                months = (document.getLong("months") ?: 1L).toInt(),
+                proofPath = document.getString("proofPath") ?: "",
+                note = document.getString("note") ?: "",
+                status = "pending"
+            )
+        }
+
+    suspend fun reviewSubscriptionRequest(requestId: String, approve: Boolean) {
+        functions.getHttpsCallable("reviewSubscriptionRequest").call(
+            mapOf("requestId" to requestId, "decision" to if (approve) "approve" else "reject")
+        ).await()
+    }
+
+    suspend fun getSubscriptionProof(path: String): ByteArray =
+        storage.reference.child(path).getBytes(5L * 1024 * 1024).await()
+
+    suspend fun getDriverStats(driverId: String): DriverStats {
+        val completed = rides.whereEqualTo("selectedDriverId", driverId)
+            .orderBy("createdAt", Query.Direction.DESCENDING).limit(100).get().await().documents
+            .filter { it.getString("status") == "completed" }
+        var ratingTotal = 0
+        var ratingCount = 0
+        completed.take(40).forEach { ride ->
+            runCatching {
+                ride.reference.collection("ratings").get().await().documents
+                    .filter { it.getString("raterId") != driverId }
+                    .forEach { rating ->
+                        ratingTotal += (rating.getLong("stars") ?: 0L).toInt()
+                        ratingCount++
+                    }
+            }
+        }
+        val earnings = completed.sumOf { (it.getLong("selectedPrice") ?: 0L).toInt() }
+        return DriverStats(
+            completedRides = completed.size,
+            averageRating = if (ratingCount == 0) 0.0 else ratingTotal.toDouble() / ratingCount,
+            totalEarnings = earnings,
+            ratingCount = ratingCount
+        )
+    }
+
+    suspend fun getCustomerStats(customerId: String): CustomerStats {
+        val customerRides = rides.whereEqualTo("customerId", customerId).limit(100).get().await().documents
+        val cairoTimeZone = java.util.TimeZone.getTimeZone("Africa/Cairo")
+        val dayKey = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+            .apply { timeZone = cairoTimeZone }.format(java.util.Date())
+        val userRef = db.collection("users").document(customerId)
+        val cancelCount = userRef.collection("cancels").document(dayKey).get().await().getLong("count")?.toInt() ?: 0
+        val user = userRef.get().await()
+        val banUntil = user.getTimestamp("banUntil")?.toDate()?.time ?: user.getLong("banUntil")
+        return CustomerStats(
+            totalRides = customerRides.size,
+            completedRides = customerRides.count { it.getString("status") == "completed" },
+            cancelledRides = customerRides.count { it.getString("status") == "cancelled" },
+            cancelsToday = cancelCount,
+            banUntil = banUntil
+        )
+    }
+
+    suspend fun listRecentRides(limit: Int = 40): List<RideRecord> = runCatching {
+        rides.orderBy("createdAt", Query.Direction.DESCENDING).limit(limit.toLong())
+            .get().await().documents.mapNotNull { it.toRideRecord() }
+    }.getOrElse {
+        rides.limit(limit.toLong()).get().await().documents.mapNotNull { it.toRideRecord() }
+    }
+
+    suspend fun listRecentRatings(limit: Int = 40): List<RatingRecord> {
+        val result = mutableListOf<RatingRecord>()
+        for (ride in listRecentRides(30)) {
+            val ratings = rides.document(ride.id).collection("ratings").get().await()
+            ratings.documents.forEach { rating ->
+                result += RatingRecord(
+                    id = "${ride.id}_${rating.id}",
+                    rideId = ride.id,
+                    raterId = rating.getString("raterId") ?: rating.id,
+                    stars = (rating.getLong("stars") ?: 0L).toInt(),
+                    comment = rating.getString("comment") ?: ""
+                )
+            }
+            if (result.size >= limit) return result.take(limit)
+        }
+        return result
+    }
+
     private fun DocumentSnapshot.toDriverCandidate() = DriverCandidate(
         uid = id, displayName = getString("displayName") ?: "بدون اسم",
         approved = getBoolean("approved") ?: false, available = getBoolean("available") ?: false,
         lat = getDouble("lat") ?: 0.0, lon = getDouble("lon") ?: 0.0,
+        updatedAt = getTimestamp("updatedAt")?.toDate()?.time
+    )
+
+    private fun DocumentSnapshot.toDriverApplication() = DriverApplication(
+        uid = id,
+        name = getString("displayName") ?: "",
+        phone = getString("phone") ?: "",
+        licenseType = getString("licenseType") ?: "غير محدد",
+        vehicleType = getString("vehicleType") ?: "غير محدد",
+        idCardImageUrl = getString("idCardImageUrl") ?: "",
+        vehicleImageUrl = getString("vehicleImageUrl") ?: "",
+        profileImageUrl = getString("profileImageUrl") ?: "",
+        approved = getBoolean("approved") == true,
+        needsMoreData = getBoolean("needsMoreData") == true,
+        adminMessage = getString("adminMessage") ?: "",
+        createdAt = getTimestamp("createdAt")?.toDate()?.time,
         updatedAt = getTimestamp("updatedAt")?.toDate()?.time
     )
 

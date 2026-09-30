@@ -21,8 +21,8 @@ android {
         applicationId = "com.wasalny.sidisalem"
         minSdk = 24
         targetSdk = 35
-        versionCode = 7
-        versionName = "5.1.0"
+        versionCode = 9
+        versionName = "5.2.2"
 
     }
 
@@ -102,5 +102,6 @@ dependencies {
     implementation("com.google.firebase:firebase-firestore-ktx")
     implementation("com.google.firebase:firebase-functions")
     implementation("com.google.firebase:firebase-messaging-ktx")
+    implementation("com.google.firebase:firebase-storage-ktx")
     implementation("com.firebase:geofire-android-common:3.2.0")
 }

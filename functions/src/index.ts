@@ -3,7 +3,8 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { initializeApp } from "firebase-admin/app";
 import { getMessaging } from "firebase-admin/messaging";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 import type { QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { geohashQueryBounds, distanceBetween, geohashForLocation } from "geofire-common";
 
@@ -18,6 +19,31 @@ function requireAuth(request: any): string {
   return uid;
 }
 
+async function requireAdmin(uid: string) {
+  const admin = await db.collection("admins").doc(uid).get();
+  if (admin.get("role") !== "admin" || admin.get("active") !== true) {
+    throw new HttpsError("permission-denied", "حساب المشرف غير معتمد");
+  }
+}
+
+function cairoDayKey(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Cairo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const part = (type: string) => parts.find(item => item.type === type)?.value ?? "00";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function subscriptionAmount(driver: FirebaseFirestore.DocumentData) {
+  return driver.hasEverSubscribed === true
+    || (typeof driver.subscriptionPlan === "string" && driver.subscriptionPlan !== "none")
+    ? 200
+    : 100;
+}
+
 async function nearbyDrivers(lat: number, lon: number, radius: number) {
   const bounds = geohashQueryBounds([lat, lon], radius);
   const result = new Map<string, QueryDocumentSnapshot>();
@@ -27,6 +53,9 @@ async function nearbyDrivers(lat: number, lon: number, radius: number) {
     snap.docs.forEach(doc => {
       const d = doc.data();
       if (typeof d.lat !== "number" || typeof d.lon !== "number") return;
+      const expiry = d.subscriptionExpiresAt?.toMillis?.()
+        ?? (typeof d.subscriptionExpiresAt === "number" ? d.subscriptionExpiresAt : 0);
+      if (expiry <= Date.now()) return;
       const updated = d.updatedAt?.toMillis?.() ?? 0;
       if (Date.now() - updated > 45000) return;
       if (distanceBetween([lat, lon], [d.lat, d.lon]) * 1000 <= radius) result.set(doc.id, doc);
@@ -78,21 +107,42 @@ async function performRideSearch(uid: string, rideId: string) {
     while (Date.now() < until) {
       const latest = (await rideRef.get()).data();
       if (!latest || latest.status !== "searching") { await rideRef.update({ searchWorkerActive: false }); return { status: latest?.status ?? "closed" }; }
-      const offers = await rideRef.collection("offers").limit(1).get();
-      if (!offers.empty) {
-        await rideRef.update({ status: "offered", searchWorkerActive: false, updatedAt: FieldValue.serverTimestamp() });
-        return { status: "offered" };
-      }
+      const offers = await rideRef.collection("offers").where("status", "==", "pending").limit(5).get();
+      if (offers.size >= 5) break;
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
+
+    const stageStatus = await db.runTransaction(async tx => {
+      const latest = await tx.get(rideRef);
+      if (!latest.exists) return "closed";
+      const latestStatus = latest.get("status");
+      if (latestStatus !== "searching") {
+        tx.update(rideRef, { searchWorkerActive: false, updatedAt: FieldValue.serverTimestamp() });
+        return String(latestStatus ?? "closed");
+      }
+      const offers = await tx.get(rideRef.collection("offers").where("status", "==", "pending").limit(1));
+      if (!offers.empty) {
+        tx.update(rideRef, { status: "offered", searchWorkerActive: false, updatedAt: FieldValue.serverTimestamp() });
+        return "offered";
+      }
+      return "searching";
+    });
+    if (stageStatus !== "searching") return { status: stageStatus };
   }
-  const final = await rideRef.get();
-  if (final.data()?.status === "searching") {
-    const offers = await rideRef.collection("offers").limit(1).get();
-    await rideRef.update({ status: offers.empty ? "no_drivers" : "offered", updatedAt: FieldValue.serverTimestamp() });
-  }
-  await rideRef.update({ searchWorkerActive: false, updatedAt: FieldValue.serverTimestamp() });
-  return { status: (await rideRef.get()).data()?.status ?? "closed" };
+  const finalStatus = await db.runTransaction(async tx => {
+    const final = await tx.get(rideRef);
+    if (!final.exists) return "closed";
+    const status = final.get("status");
+    if (status !== "searching") {
+      tx.update(rideRef, { searchWorkerActive: false, updatedAt: FieldValue.serverTimestamp() });
+      return String(status ?? "closed");
+    }
+    const offers = await tx.get(rideRef.collection("offers").where("status", "==", "pending").limit(1));
+    const nextStatus = offers.empty ? "no_drivers" : "offered";
+    tx.update(rideRef, { status: nextStatus, searchWorkerActive: false, updatedAt: FieldValue.serverTimestamp() });
+    return nextStatus;
+  });
+  return { status: finalStatus };
 }
 
 export const startRideSearch = onCall({ region: "us-central1", timeoutSeconds: 70, memory: "256MiB" }, async request => {
@@ -100,6 +150,161 @@ export const startRideSearch = onCall({ region: "us-central1", timeoutSeconds: 7
   const rideId = String(request.data?.rideId ?? "");
   if (!rideId) throw new HttpsError("invalid-argument", "rideId مطلوب");
   return performRideSearch(uid, rideId);
+});
+
+export const submitSubscriptionRequest = onCall({ region: "us-central1" }, async request => {
+  const uid = requireAuth(request);
+  const requestId = String(request.data?.requestId ?? "");
+  const proofPath = String(request.data?.proofPath ?? "");
+  const note = String(request.data?.note ?? "").trim().slice(0, 300);
+  if (!/^[A-Za-z0-9]{20}$/.test(requestId) || proofPath !== `subscriptionProofs/${uid}/${requestId}`) {
+    throw new HttpsError("invalid-argument", "بيانات إثبات التحويل غير صالحة");
+  }
+
+  const proof = getStorage().bucket().file(proofPath);
+  const [exists] = await proof.exists();
+  if (!exists) throw new HttpsError("failed-precondition", "ارفع صورة إثبات التحويل أولاً");
+  const [metadata] = await proof.getMetadata();
+  const size = Number(metadata.size ?? 0);
+  if (!/^image\/(jpeg|png|webp)$/.test(String(metadata.contentType ?? "")) || size <= 0 || size > 5 * 1024 * 1024) {
+    throw new HttpsError("invalid-argument", "الصورة يجب أن تكون JPG أو PNG أو WEBP وبحجم لا يتجاوز 5 ميجابايت");
+  }
+
+  const driverRef = db.collection("drivers").doc(uid);
+  const requestRef = db.collection("subscriptionRequests").doc(requestId);
+  const pendingQuery = db.collection("subscriptionRequests")
+    .where("driverId", "==", uid).where("status", "==", "pending").limit(1);
+  return db.runTransaction(async tx => {
+    const [driverSnap, requestSnap, pendingSnap] = await Promise.all([
+      tx.get(driverRef), tx.get(requestRef), tx.get(pendingQuery)
+    ]);
+    if (!driverSnap.exists || driverSnap.get("approved") !== true) {
+      throw new HttpsError("failed-precondition", "يجب اعتماد حساب السائق قبل طلب الاشتراك");
+    }
+    if (requestSnap.exists || !pendingSnap.empty) {
+      throw new HttpsError("already-exists", "لديك طلب اشتراك قيد المراجعة بالفعل");
+    }
+    const amount = subscriptionAmount(driverSnap.data()!);
+    tx.create(requestRef, {
+      driverId: uid,
+      driverName: driverSnap.get("displayName") ?? "سائق",
+      amount,
+      months: 1,
+      proofPath,
+      note,
+      status: "pending",
+      createdAt: FieldValue.serverTimestamp()
+    });
+    return { requestId, amount };
+  });
+});
+
+export const reviewSubscriptionRequest = onCall({ region: "us-central1" }, async request => {
+  const adminUid = requireAuth(request);
+  await requireAdmin(adminUid);
+  const requestId = String(request.data?.requestId ?? "");
+  const decision = String(request.data?.decision ?? "");
+  if (!/^[A-Za-z0-9]{20}$/.test(requestId) || !["approve", "reject"].includes(decision)) {
+    throw new HttpsError("invalid-argument", "بيانات المراجعة غير صالحة");
+  }
+
+  const subscriptionRef = db.collection("subscriptionRequests").doc(requestId);
+  return db.runTransaction(async tx => {
+    const subscriptionSnap = await tx.get(subscriptionRef);
+    if (!subscriptionSnap.exists || subscriptionSnap.get("status") !== "pending") {
+      throw new HttpsError("failed-precondition", "طلب الاشتراك لم يعد قيد المراجعة");
+    }
+    const driverRef = db.collection("drivers").doc(String(subscriptionSnap.get("driverId") ?? ""));
+    const driverSnap = await tx.get(driverRef);
+    if (!driverSnap.exists || driverSnap.get("approved") !== true) {
+      throw new HttpsError("failed-precondition", "حساب السائق غير موجود أو غير معتمد");
+    }
+    if (decision === "reject") {
+      tx.update(subscriptionRef, {
+        status: "rejected",
+        reviewedBy: adminUid,
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      return { status: "rejected" };
+    }
+
+    const driver = driverSnap.data()!;
+    if (subscriptionSnap.get("months") !== 1 || subscriptionSnap.get("amount") !== subscriptionAmount(driver)) {
+      throw new HttpsError("failed-precondition", "قيمة الاشتراك لا تطابق الخطة الحالية");
+    }
+    const now = Date.now();
+    const currentExpiry = driver.subscriptionExpiresAt instanceof Timestamp
+      ? driver.subscriptionExpiresAt.toMillis()
+      : typeof driver.subscriptionExpiresAt === "number" ? driver.subscriptionExpiresAt : 0;
+    const isRenewal = subscriptionAmount(driver) === 200;
+    const expiresAt = Timestamp.fromMillis(Math.max(now, currentExpiry) + 30 * 24 * 60 * 60 * 1000);
+    tx.update(driverRef, {
+      subscriptionExpiresAt: expiresAt,
+      subscriptionPlan: isRenewal ? "monthly" : "first",
+      hasEverSubscribed: true,
+      available: false,
+      updatedAt: FieldValue.serverTimestamp()
+    });
+    tx.update(subscriptionRef, {
+      status: "approved",
+      reviewedBy: adminUid,
+      updatedAt: FieldValue.serverTimestamp()
+    });
+    return { status: "approved", expiresAt: expiresAt.toMillis() };
+  });
+});
+
+export const cancelCustomerRide = onCall({ region: "us-central1" }, async request => {
+  const uid = requireAuth(request);
+  const rideId = String(request.data?.rideId ?? "");
+  if (!rideId) throw new HttpsError("invalid-argument", "rideId مطلوب");
+  const now = Date.now();
+  const dayKey = cairoDayKey(new Date(now));
+  const rideRef = db.collection("rides").doc(rideId);
+  const userRef = db.collection("users").doc(uid);
+  const cancelRef = userRef.collection("cancels").doc(dayKey);
+
+  return db.runTransaction(async tx => {
+    const [rideSnap, userSnap, cancelSnap] = await Promise.all([
+      tx.get(rideRef), tx.get(userRef), tx.get(cancelRef)
+    ]);
+    if (!rideSnap.exists || rideSnap.get("customerId") !== uid) {
+      throw new HttpsError("permission-denied", "هذه الرحلة ليست لحسابك");
+    }
+    if (rideSnap.get("status") === "cancelled") {
+      return { status: "cancelled", count: cancelSnap.get("count") ?? 0 };
+    }
+    const allowedStatuses = ["searching", "scheduled", "offered", "accepted", "driver_arriving", "driver_arrived", "in_progress"];
+    if (!allowedStatuses.includes(String(rideSnap.get("status")))) {
+      throw new HttpsError("failed-precondition", "لا يمكن إلغاء الرحلة في حالتها الحالية");
+    }
+    const banUntil = userSnap.get("banUntil");
+    const banUntilMillis = banUntil instanceof Timestamp
+      ? banUntil.toMillis()
+      : typeof banUntil === "number" ? banUntil : 0;
+    if (banUntilMillis > now) {
+      throw new HttpsError("permission-denied", "حسابك موقوف مؤقتًا بسبب تكرار إلغاء الرحلات");
+    }
+
+    const selectedDriverId = rideSnap.get("selectedDriverId");
+    const selectedDriverRef = typeof selectedDriverId === "string"
+      ? db.collection("drivers").doc(selectedDriverId)
+      : null;
+    const selectedDriverSnap = selectedDriverRef ? await tx.get(selectedDriverRef) : null;
+    const count = (cancelSnap.get("count") ?? 0) + 1;
+    tx.update(rideRef, { status: "cancelled", updatedAt: FieldValue.serverTimestamp() });
+    if (selectedDriverRef && selectedDriverSnap?.exists) {
+      tx.update(selectedDriverRef, { available: false, updatedAt: FieldValue.serverTimestamp() });
+    }
+    tx.set(cancelRef, { count, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    if (count > 3) {
+      tx.set(userRef, {
+        banUntil: Timestamp.fromMillis(now + 24 * 60 * 60 * 1000),
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
+    return { status: "cancelled", count, banned: count > 3 };
+  });
 });
 
 export const dispatchScheduledRides = onSchedule({ schedule: "every 1 minutes", region: "us-central1", timeZone: "Africa/Cairo", memory: "512MiB", timeoutSeconds: 540, maxInstances: 1 }, async () => {
@@ -148,6 +353,17 @@ async function sendToUser(uid: string | undefined, title: string, body: string, 
 export const notifyDriverOnRequest = onDocumentCreated("drivers/{driverId}/requests/{rideId}", async event => {
   const data = event.data?.data();
   if (!data) return;
+  const ride = await db.collection("rides").doc(event.params.rideId).get();
+  if (ride.data()?.status !== "searching") {
+    const rideData = ride.data();
+    const isSelectedDriver = rideData?.selectedDriverId === event.params.driverId;
+    const stillActive = ["accepted", "driver_arriving", "driver_arrived", "in_progress"].includes(String(rideData?.status));
+    await event.data?.ref.update({
+      status: isSelectedDriver && stillActive ? "selected" : isSelectedDriver ? "closed" : "taken_by_other",
+      updatedAt: FieldValue.serverTimestamp()
+    });
+    return;
+  }
   await sendToUser(event.params.driverId, "طلب رحلة جديد", `${data.fromAddress ?? "نقطة الركوب"} → ${data.toAddress ?? "الوجهة"}`, event.params.rideId);
 });
 
@@ -156,6 +372,57 @@ export const notifyRideEvents = onDocumentUpdated("rides/{rideId}", async event 
   const after = event.data?.after.data();
   if (!before || !after || before.status === after.status) return;
   const status = after.status;
+  if (status === "accepted" && typeof after.selectedDriverId === "string" && Array.isArray(after.invitedDriverIds)) {
+    const selectedDriverId = after.selectedDriverId as string;
+    const invitedDriverIds = [...new Set<string>(
+      (after.invitedDriverIds as unknown[]).filter((id): id is string => typeof id === "string" && id.length > 0)
+    )];
+    const otherDriverIds = invitedDriverIds.filter(id => id !== selectedDriverId);
+    const rideRef = db.collection("rides").doc(event.params.rideId);
+    const selectedDriverRef = db.collection("drivers").doc(selectedDriverId);
+    await db.runTransaction(async tx => {
+      const [currentRide, selectedDriver] = await Promise.all([
+        tx.get(rideRef), tx.get(selectedDriverRef)
+      ]);
+      const currentStatus = currentRide.get("status");
+      if (selectedDriver.exists
+        && currentRide.get("selectedDriverId") === selectedDriverId
+        && ["accepted", "driver_arriving", "driver_arrived", "in_progress"].includes(String(currentStatus))) {
+        tx.update(selectedDriverRef, { available: false, updatedAt: FieldValue.serverTimestamp() });
+      }
+    });
+
+    for (let offset = 0; offset < otherDriverIds.length; offset += 400) {
+      const batch = db.batch();
+      for (const driverId of otherDriverIds.slice(offset, offset + 400)) {
+        batch.set(
+          db.collection("drivers").doc(driverId).collection("requests").doc(event.params.rideId),
+          { status: "taken_by_other", updatedAt: FieldValue.serverTimestamp() },
+          { merge: true }
+        );
+      }
+      await batch.commit();
+    }
+
+    const pendingOffers = await rideRef.collection("offers").where("status", "==", "pending").get();
+    for (let offset = 0; offset < pendingOffers.docs.length; offset += 400) {
+      const batch = db.batch();
+      pendingOffers.docs.slice(offset, offset + 400)
+        .filter(offer => offer.id !== selectedDriverId)
+        .forEach(offer => batch.update(offer.ref, {
+          status: "rejected",
+          updatedAt: FieldValue.serverTimestamp()
+        }));
+      await batch.commit();
+    }
+
+    for (let offset = 0; offset < otherDriverIds.length; offset += 50) {
+      await Promise.all(otherDriverIds.slice(offset, offset + 50).map(driverId =>
+        sendToUser(driverId, "تم قبول الطلب", "اختار الراكب سائقاً آخر لهذه الرحلة", event.params.rideId)
+      ));
+    }
+  }
+
   const messages: Record<string, string> = {
     accepted: "تم اختيار السائق لرحلتك",
     driver_arriving: "السائق بدأ التوجه إليك",
@@ -183,6 +450,12 @@ export const heartbeatDriver = onCall({ region: "us-central1" }, async request =
   const ref = db.collection("drivers").doc(uid); const snap = await ref.get();
   if (!snap.exists || snap.data()?.approved !== true) throw new HttpsError("permission-denied", "السائق غير معتمد");
   if (snap.data()?.available !== true) return { available: false };
+  const expiry = snap.data()?.subscriptionExpiresAt;
+  const expiryMillis = expiry?.toMillis?.() ?? (typeof expiry === "number" ? expiry : 0);
+  if (expiryMillis <= Date.now()) {
+    await ref.update({ available: false, updatedAt: FieldValue.serverTimestamp() });
+    throw new HttpsError("failed-precondition", "انتهى الاشتراك الشهري للسائق");
+  }
   await ref.update({ lat, lon, geohash: geohashForLocation([lat, lon]), updatedAt: FieldValue.serverTimestamp() });
   return { available: true };
 });

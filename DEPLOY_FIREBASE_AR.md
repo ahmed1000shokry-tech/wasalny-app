@@ -11,10 +11,18 @@ firebase login
 
 ## 2) من مجلد المشروع
 
+فعّل Firebase Storage وأنشئ bucket للمشروع `wasalny-app-f5dbb` من Firebase Console قبل رفع إثبات التحويل. تحقق أن `app/google-services.json` يشير إلى المشروع نفسه.
+
 ```bash
 firebase use wasalny-app-f5dbb
-firebase deploy --only firestore:rules,firestore:indexes,functions
+firebase deploy --only firestore:rules,firestore:indexes,storage,functions
 ```
+
+تأكد من وجود `admins/{UID}` بحقلَي `role: "admin"` و`active: true`. تعتمد مراجعة الاشتراكات على صلاحية UID هذه؛ لا تستخدم كلمة مرور ثابتة داخل التطبيق.
+
+رسوم السائق 100 جنيه لأول شهر و200 جنيه للتجديد، والتحويل إلى 01069631950. المراجعة يدوية؛ لا يؤكد التطبيق وصول الأموال تلقائيًا. السائقون المعتمدون الحاليون دون اشتراك سابق يحتاجون أول اشتراك بقيمة 100 جنيه بعد التفعيل.
+
+الشروط الموجودة صياغة تشغيلية أولية محفوظة محليًا لكل UID؛ اعتمد النص وسياسة الخصوصية قانونيًا قبل الإطلاق العام.
 
 ## 3) بناء APK
 
@@ -26,4 +34,4 @@ firebase deploy --only firestore:rules,firestore:indexes,functions
 
 ## مهم
 
-Cloud Functions تحتاج Firebase/Google Cloud Billing على خطة Blaze. ضع Budget Alert قبل نشرها.
+Cloud Functions وFirebase Storage تحتاج إعداد Billing مناسبًا وفق مشروع Firebase. ضع Budget Alert، وحدد سياسة الاحتفاظ بإيصالات التحويل، واختبر الرفع والقبول والرفض بحسابات تجريبية قبل الإنتاج.

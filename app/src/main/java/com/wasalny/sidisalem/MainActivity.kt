@@ -72,12 +72,13 @@ import java.util.Calendar
 import kotlin.math.*
 
 val Context.dataStore by preferencesDataStore(name = "wasalny_v5")
+private const val TERMS_VERSION = "2026-09-30-v1"
+private fun termsAcceptedKey(uid: String) = stringPreferencesKey("terms_accepted_version_$uid")
 
 object Config {
     const val LAT = 31.27133
     const val LON = 30.786165
     const val RADIUS_KM = 5.0
-    const val PHONE = "01069631950"
     val CENTER = Coordinate(LAT, LON)
 }
 
@@ -167,7 +168,17 @@ fun AppV4() {
     var showCustomerProfile by remember { mutableStateOf(false) }
     var driverApproved by remember { mutableStateOf<Boolean?>(null) }
     var driverPhone by remember { mutableStateOf("") }
+    var driverAdminMessage by remember { mutableStateOf("") }
+    var termsAccepted by remember { mutableStateOf(false) }
+    var termsLoaded by remember { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    LaunchedEffect(firebaseUser?.uid) {
+        termsLoaded = false
+        val uid = firebaseUser?.uid
+        termsAccepted = uid != null && context.dataStore.data.first()[termsAcceptedKey(uid)] == TERMS_VERSION
+        termsLoaded = true
+    }
 
     LaunchedEffect(firebaseUser?.uid) {
         if (firebaseUser != null && Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -181,6 +192,23 @@ fun AppV4() {
         onDispose { FirebaseAuth.getInstance().removeAuthStateListener(listener) }
     }
 
+    DisposableEffect(firebaseUser?.uid, role) {
+        val uid = firebaseUser?.uid
+        if (uid == null || role != "driver") return@DisposableEffect onDispose { }
+        val registration = FirebaseRidesRepository().listenDriverApplication(
+            uid,
+            { application ->
+                if (application != null) {
+                    driverApproved = application.approved
+                    driverPhone = application.phone.ifBlank { driverPhone }
+                    driverAdminMessage = if (application.needsMoreData) application.adminMessage else ""
+                }
+            },
+            { error -> android.util.Log.w("WasalnyDriver", "تعذر تحديث حالة طلب السائق", error) }
+        )
+        onDispose { registration.remove() }
+    }
+
     LaunchedEffect(firebaseUser?.uid, role) {
         val uid = firebaseUser?.uid ?: return@LaunchedEffect
         runCatching {
@@ -190,14 +218,26 @@ fun AppV4() {
         val prefs = context.dataStore.data.first()
         if (role == null) role = prefs[stringPreferencesKey("role")]
         if (role == "driver") {
-            driverApproved = FirebaseRidesRepository().getDriverApproval(uid) ?: false
+            val repository = FirebaseRidesRepository()
+            driverApproved = repository.getDriverApproval(uid) ?: false
             driverPhone = firebaseUser?.phoneNumber ?: getUserPhone(context)
+            driverAdminMessage = repository.getDriverApplication(uid)?.adminMessage.orEmpty()
         }
     }
 
     MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFF0D7C3E))) {
         when {
             firebaseUser == null -> PhoneAuthScreen { firebaseUser = FirebaseAuth.getInstance().currentUser }
+            !termsLoaded -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            !termsAccepted -> TermsAndConditionsScreen(onAccept = {
+                val uid = firebaseUser?.uid
+                if (uid != null) {
+                    scope.launch {
+                        context.dataStore.edit { it[termsAcceptedKey(uid)] = TERMS_VERSION }
+                        termsAccepted = true
+                    }
+                }
+            })
             adminMode -> AdminPanel {
                 FirebaseAuth.getInstance().signOut(); adminMode = false; role = null
             }
@@ -207,7 +247,7 @@ fun AppV4() {
             )
             showDriverRegistration -> DriverRegistrationScreen(
                 onBack = { showDriverRegistration = false },
-                onComplete = { selectedRole -> showDriverRegistration = false; role = selectedRole }
+                onComplete = { selectedRole -> showDriverRegistration = false; role = selectedRole; driverAdminMessage = "" }
             )
             showCustomerProfile -> CustomerProfileScreen(
                 onBack = { showCustomerProfile = false },
@@ -222,6 +262,8 @@ fun AppV4() {
             )
             role == "driver" && driverApproved == false -> DriverPendingApprovalScreen(
                 phone = driverPhone,
+                adminMessage = driverAdminMessage,
+                onUpdateData = { showDriverRegistration = true },
                 onLogout = {
                     scope.launch { context.dataStore.edit { it.remove(stringPreferencesKey("role")) } }
                     FirebaseAuth.getInstance().signOut(); role = null; driverApproved = null; driverPhone = ""
@@ -247,7 +289,6 @@ fun AppV4() {
                     composable("rides?rideId={rideId}", arguments = listOf(navArgument("rideId") { type = NavType.StringType; nullable = true; defaultValue = null })) { entry ->
                         RidesV4(navController, role!!, entry.arguments?.getString("rideId"))
                     }
-                    composable("wallet") { WalletV4() }
                     composable("account") { AccountV4(onAdminRequest = { showAdminLogin = true }) { navController.navigate("home"); role = null } }
                     composable("manage_favs") { ManageFavsV4() }
                 }
@@ -261,6 +302,7 @@ fun WelcomeV4(onSelect: (String) -> Unit, onAdminRequest: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var secretTaps by remember { mutableIntStateOf(0) }
+    var showTerms by remember { mutableStateOf(false) }
     Column(
         Modifier
             .fillMaxSize()
@@ -310,27 +352,68 @@ fun WelcomeV4(onSelect: (String) -> Unit, onAdminRequest: () -> Unit) {
             modifier = Modifier.fillMaxWidth().height(56.dp)
         ) { Text("أنا سائق") }
         Spacer(Modifier.height(12.dp))
-        OutlinedButton(
-            onClick = {
-                onAdminRequest()
-            },
-            modifier = Modifier.fillMaxWidth().height(52.dp)
-        ) { Text("أنا مشرف") }
-        Spacer(Modifier.height(20.dp))
-        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))) {
-            Column(Modifier.padding(12.dp)) {
-                Text("✨ مميزات جديدة تنافس أوبر:", fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                Text(
-                    "• وضع الستات الآمن\n• باقة العيلة\n• توكتوك بيشيل حمولة\n• بدون نت SMS\n• ثواب المسجد",
-                    fontSize = 10.sp
-                )
-            }
+        TextButton(onClick = { showTerms = true }) { Text("الشروط والأحكام", color = Color.Gray) }
+    }
+    if (showTerms) {
+        AlertDialog(
+            onDismissRequest = { showTerms = false },
+            title = { Text("الشروط والأحكام") },
+            text = { TermsContent(Modifier.heightIn(max = 420.dp)) },
+            confirmButton = { TextButton(onClick = { showTerms = false }) { Text("إغلاق") } }
+        )
+    }
+}
+
+private val TERMS_TEXT = """
+شروط استخدام وصلني توكتوك
+
+1. يربط التطبيق بين الراكب والسائق داخل نطاق الخدمة الظاهر في الخريطة.
+2. الأجرة نقدية حاليًا، ويختار الراكب عرض السعر ووقت الوصول المناسبين قبل بدء الرحلة.
+3. على الراكب تحديد نقطة ركوب ووجهة صحيحتين، وعلى الطرفين التأكد من تفاصيل الرحلة قبل التحرك.
+4. إلغاء أكثر من ثلاث رحلات في اليوم بتوقيت القاهرة يؤدي إلى إيقاف طلب الرحلات لمدة 24 ساعة.
+5. اشتراك السائق 100 جنيه لأول شهر و200 جنيه للتجديد، ويُفعّل بعد مراجعة إثبات التحويل.
+6. يجب على السائق تقديم بيانات صحيحة والالتزام بقواعد المرور والسلامة واحترام الراكب.
+7. تُستخدم بيانات الموقع أثناء البحث والرحلة لتقديم الخدمة، وتظهر بيانات التواصل للسائق المختار فقط وفق صلاحيات التطبيق.
+8. ينبغي أن تكون التقييمات دقيقة ومحترمة وألا تتضمن بيانات شخصية أو محتوى مسيئًا.
+9. في الطوارئ، تواصل مع خدمات الطوارئ المحلية؛ التطبيق ليس بديلًا عنها.
+10. باستخدام التطبيق، يقر المستخدم بأنه قرأ هذه الشروط ويوافق عليها.
+""".trimIndent()
+
+@Composable
+private fun TermsContent(modifier: Modifier = Modifier) {
+    Column(modifier.verticalScroll(rememberScrollState())) {
+        Text(TERMS_TEXT, fontSize = 13.sp, lineHeight = 21.sp)
+    }
+}
+
+@Composable
+private fun TermsAndConditionsScreen(onAccept: () -> Unit) {
+    var checked by remember { mutableStateOf(false) }
+    Column(
+        Modifier.fillMaxSize().padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("الشروط والأحكام", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Card(Modifier.weight(1f), colors = CardDefaults.cardColors(containerColor = Color(0xFFF4F7F4))) {
+            TermsContent(Modifier.fillMaxSize().padding(16.dp))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = checked, onCheckedChange = { checked = it })
+            Text("قرأت الشروط وأوافق عليها")
+        }
+        Button(onClick = onAccept, enabled = checked, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+            Text("متابعة")
         }
     }
 }
 
 @Composable
-fun DriverPendingApprovalScreen(phone: String, onLogout: () -> Unit) {
+fun DriverPendingApprovalScreen(
+    phone: String,
+    adminMessage: String,
+    onUpdateData: () -> Unit,
+    onLogout: () -> Unit
+) {
     Column(
         Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.Center,
@@ -343,6 +426,17 @@ fun DriverPendingApprovalScreen(phone: String, onLogout: () -> Unit) {
             textAlign = TextAlign.Center,
             color = Color.Gray
         )
+        if (adminMessage.isNotBlank()) {
+            Spacer(Modifier.height(12.dp))
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("مطلوب استكمال البيانات", fontWeight = FontWeight.Bold)
+                    Text(adminMessage)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onClick = onUpdateData, modifier = Modifier.fillMaxWidth()) { Text("تحديث بياناتي") }
+        }
         Spacer(Modifier.height(20.dp))
         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))) {
             Column(Modifier.padding(16.dp)) {
@@ -499,7 +593,6 @@ fun BottomBarV4(nav: NavController, role: String) {
             Triple("home", "الرئيسية", Icons.Default.Home),
             Triple("map", "الخريطة", Icons.Default.Map),
             Triple("rides", "طلبات", Icons.Default.List),
-            Triple("wallet", "محفظتي", Icons.Default.AccountBalanceWallet),
             Triple("account", "حسابي", Icons.Default.Person)
         )
     } else {
@@ -507,7 +600,6 @@ fun BottomBarV4(nav: NavController, role: String) {
             Triple("home", "روحني", Icons.Default.Home),
             Triple("map", "الخريطة", Icons.Default.Map),
             Triple("rides", "رحلاتي", Icons.Default.History),
-            Triple("wallet", "محفظتي", Icons.Default.AccountBalanceWallet),
             Triple("account", "أماني", Icons.Default.Security)
         )
     }
@@ -529,7 +621,14 @@ fun BottomBarV4(nav: NavController, role: String) {
 fun HomeV4(nav: NavController, role: String) {
     val ctx = LocalContext.current
     var favs by remember { mutableStateOf<List<FavPlace>>(emptyList()) }
-    LaunchedEffect(Unit) { favs = getFavs(ctx) }
+    var customerStats by remember { mutableStateOf<CustomerStats?>(null) }
+    LaunchedEffect(role) {
+        favs = getFavs(ctx)
+        val uid = FirebaseAuth.getInstance().currentUser?.uid
+        if (role == "customer" && uid != null) {
+            runCatching { customerStats = FirebaseRidesRepository().getCustomerStats(uid) }
+        }
+    }
 
     if (role == "driver") {
         DriverHomeV4(nav)
@@ -547,8 +646,27 @@ fun HomeV4(nav: NavController, role: String) {
                 fontSize = 11.sp,
                 color = Color(0xFF0D7C3E)
             )
-            Spacer(Modifier.height(8.dp))
-                Text("🧭 اختار وجهتك من الأماكن المحفوظة", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Spacer(Modifier.height(14.dp))
+            Button(
+                enabled = customerStats?.isBanned != true,
+                onClick = { nav.navigate("map") },
+                modifier = Modifier.fillMaxWidth().height(58.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0D7C3E))
+            ) {
+                Icon(Icons.Default.DirectionsCar, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("اطلب رحلة دلوقت", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            }
+            if (customerStats?.isBanned == true) {
+                Text(
+                    "طلبات الرحلات موقوفة مؤقتًا حتى ${java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale("ar"))
+                        .format(java.util.Date(customerStats!!.banUntil!!))}",
+                    color = Color(0xFFB3261E)
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text("أو اختار وجهة محفوظة", fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
         if (favs.isEmpty()) {
             item {
@@ -934,29 +1052,10 @@ fun MapV4(
                         else Text(if (bookingType == "school") "🏫 احجز رحلة المدرسة" else "✅ اطلب التوكتوك حالاً")
                     }
                     Spacer(Modifier.height(6.dp))
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = { showSave = true },
-                            modifier = Modifier.weight(1f)
-                        ) { Text("💾 احفظ كـ بيت", fontSize = 11.sp) }
-                        OutlinedButton(
-                            onClick = {
-                                val sms = Intent(
-                                    Intent.ACTION_SENDTO,
-                                    Uri.parse("smsto:${Config.PHONE}")
-                                )
-                                sms.putExtra(
-                                    "sms_body",
-                                    "طلب مشوار من $pickupAddr إلى $dropoffAddr"
-                                )
-                                ctx.startActivity(sms)
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) { Text("📱 طلب عبر SMS", fontSize = 11.sp) }
-                    }
+                    OutlinedButton(
+                        onClick = { showSave = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("💾 احفظ كـ بيت") }
                 } else {
                     Text(
                         "👆 اضغط على الخريطة لتحديد نقطة البداية والوجهة\n💾 احفظ الوجهات المتكررة لاختيارها بسهولة لاحقاً",
@@ -1091,28 +1190,6 @@ fun MapV4(
 }
 
 @Composable
-fun WalletV4() {
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        Text("💳 محفظتي ونقاطي", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(12.dp))
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFF4F4F4)),
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Column(Modifier.padding(20.dp)) {
-                Text("المحفظة غير مفعلة حالياً", fontWeight = FontWeight.Bold)
-                Text("لن يظهر رصيد أو نقاط قبل ربط خدمة الدفع.", fontSize = 12.sp, color = Color.Gray)
-            }
-        }
-    }
-}
-
-@Composable
 fun AccountV4(onAdminRequest: () -> Unit, onRoleChanged: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1179,8 +1256,7 @@ fun AccountV4(onAdminRequest: () -> Unit, onRoleChanged: () -> Unit) {
         Spacer(Modifier.height(20.dp))
         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))) {
             Column(Modifier.padding(12.dp)) {
-                Text("أرقام الطوارئ", fontWeight = FontWeight.Bold)
-                Text("الدعم: ${Config.PHONE}", fontSize = 13.sp)
+                Text("رقم الطوارئ", fontWeight = FontWeight.Bold)
                 Text("الطوارئ: 122", fontSize = 13.sp)
             }
         }
