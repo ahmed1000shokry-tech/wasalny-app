@@ -80,7 +80,8 @@ private fun CustomerRideOffersScreen(rideId: String, customerId: String, nav: Na
         onDispose { reg.remove() }
     }
 
-    LaunchedEffect(rideId) {
+    LaunchedEffect(rideId, ride?.status) {
+        if (ride?.status != "searching") return@LaunchedEffect
         runCatching { repository.runSearch(rideId) }
             .onFailure { error = it.localizedMessage ?: "تعذر بدء البحث عن سائق" }
     }
@@ -102,6 +103,14 @@ private fun CustomerRideOffersScreen(rideId: String, customerId: String, nav: Na
             if (current.selectedPrice != null) Text("الأجرة المتفق عليها: ${current.selectedPrice} جنيه", fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             StatusCard(current.status)
+            if (current.status == "scheduled" && current.bookingType == "school") {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "الحجز محفوظ. عند حلول الموعد سيتم إرساله لكل السائقين المتاحين، وليس بنظام نطاق 500م/1كم/2كم/5كم.",
+                    color = Color(0xFF0D7C3E),
+                    fontSize = 12.sp
+                )
+            }
             if (current.selectedDriverId != null && driverLocation != null) {
                 val age = driverLocation?.updatedAt?.let { (System.currentTimeMillis() - it) / 1000 }
                 Text("موقع التوكتوك: %.5f, %.5f".format(driverLocation!!.lat, driverLocation!!.lon), color = Color(0xFF0D7C3E))
@@ -124,7 +133,11 @@ private fun CustomerRideOffersScreen(rideId: String, customerId: String, nav: Na
             Text("أفضل العروض (${pendingOffers.size}/5)", fontWeight = FontWeight.Bold)
             if (pendingOffers.isEmpty()) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text("بنوسع البحث تلقائياً: 500م → 1كم → 2كم → 5كم", color = Color.Gray)
+                Text(
+                    if (ride?.bookingType == "school") "تم إرسال الحجز لكل السائقين المتاحين عند موعد الرحلة."
+                    else "بنوسع البحث تلقائياً: 500م → 1كم → 2كم → 5كم",
+                    color = Color.Gray
+                )
             } else {
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(pendingOffers, key = { it.driverId }) { offer ->
@@ -489,7 +502,10 @@ private fun DriverRideRequestsScreen(driverId: String) {
                         Card(Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(12.dp)) {
                                 Text("${request.from} → ${request.to}", fontWeight = FontWeight.Bold)
-                                Text("%.2f كم | نطاق ${request.radiusMeters}م".format(request.distanceKm))
+                                Text(
+                                    if (request.radiusMeters > 0) "%.2f كم | نطاق ${request.radiusMeters}م".format(request.distanceKm)
+                                    else "%.2f كم | حجز مُرسل لكل السائقين المتاحين".format(request.distanceKm)
+                                )
                                 if (request.status == "selected") {
                                     val rs = selectedRides[request.rideId]
                                     when {

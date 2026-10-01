@@ -10,6 +10,8 @@ import android.location.Geocoder
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
+import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -23,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -57,12 +60,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import org.osmdroid.config.Configuration
-import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint as OsmGeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.CopyrightOverlay
-import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
 import org.osmdroid.views.overlay.Polyline
@@ -200,6 +201,8 @@ fun AppV4(notificationRideId: String? = null) {
     var role by remember { mutableStateOf<String?>(null) }
     var showDriverRegistration by remember { mutableStateOf(false) }
     var showCustomerProfile by remember { mutableStateOf(false) }
+    var showAdminLogin by remember { mutableStateOf(false) }
+    var authenticatedAdminUid by remember { mutableStateOf<String?>(null) }
     var driverApproved by remember { mutableStateOf<Boolean?>(null) }
     var driverPhone by remember { mutableStateOf("") }
     var driverAdminMessage by remember { mutableStateOf("") }
@@ -267,11 +270,13 @@ fun AppV4(notificationRideId: String? = null) {
         role,
         showDriverRegistration,
         showCustomerProfile,
+        showAdminLogin,
+        authenticatedAdminUid,
         driverApproved
     ) {
         val rideId = notificationRideId ?: return@LaunchedEffect
         if (rideId == openedNotificationRideId || firebaseUser == null || !termsAccepted || role == null ||
-            showDriverRegistration || showCustomerProfile ||
+            showDriverRegistration || showCustomerProfile || showAdminLogin || authenticatedAdminUid != null ||
             (role == "driver" && driverApproved == false)
         ) return@LaunchedEffect
 
@@ -283,7 +288,22 @@ fun AppV4(notificationRideId: String? = null) {
 
     WasalnyAppTheme {
         when {
+            showAdminLogin -> AdminLoginScreen(
+                onBack = { showAdminLogin = false },
+                onSuccess = {
+                    showAdminLogin = false
+                    authenticatedAdminUid = FirebaseAuth.getInstance().currentUser?.uid
+                }
+            )
             firebaseUser == null -> PhoneAuthScreen { firebaseUser = FirebaseAuth.getInstance().currentUser }
+            authenticatedAdminUid != null && firebaseUser?.uid == authenticatedAdminUid -> AdminPanel(
+                onLogout = {
+                    authenticatedAdminUid = null
+                    FirebaseAuth.getInstance().signOut()
+                    firebaseUser = null
+                    role = null
+                }
+            )
             !termsLoaded -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             !termsAccepted -> TermsAndConditionsScreen(onAccept = {
                 val uid = firebaseUser?.uid
@@ -341,7 +361,12 @@ fun AppV4(notificationRideId: String? = null) {
                     ) { entry ->
                         RidesV4(navController, role!!, entry.arguments?.getString("rideId"))
                     }
-                    composable("account") { AccountV4 { navController.navigate("home"); role = null } }
+                    composable("account") {
+                        AccountV4(
+                            onRoleChanged = { navController.navigate("home"); role = null },
+                            onAdminLogin = { showAdminLogin = true }
+                        )
+                    }
                     composable("manage_favs") { ManageFavsV4() }
                 }
             }
@@ -752,7 +777,7 @@ fun BottomBarV4(nav: NavController, role: String) {
         listOf(
             Triple("home", "الرئيسية", Icons.Default.Home),
             Triple("map", "الخريطة", Icons.Default.Map),
-            Triple("rides", "طلبات", Icons.Default.List),
+            Triple("rides", "طلبات", Icons.AutoMirrored.Filled.List),
             Triple("account", "حسابي", Icons.Default.Person)
         )
     } else {
@@ -939,22 +964,46 @@ private fun OpenStreetMapView(
     AndroidView(
         modifier = modifier,
         factory = { context ->
+            Configuration.getInstance().load(
+                context,
+                context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE)
+            )
             Configuration.getInstance().userAgentValue = context.packageName
             MapView(context).apply {
                 setTileSource(TileSourceFactory.MAPNIK)
                 setMultiTouchControls(true)
+                setUseDataConnection(true)
                 controller.setZoom(mapZoom.toDouble())
                 controller.setCenter(OsmGeoPoint(mapCenter.latitude, mapCenter.longitude))
                 tag = mapCenter to mapZoom
-                overlays.add(MapEventsOverlay(object : MapEventsReceiver {
-                    override fun singleTapConfirmedHelper(point: OsmGeoPoint?): Boolean {
-                        point ?: return false
-                        latestOnMapClick(Coordinate(point.latitude, point.longitude))
-                        return true
+                var downX = 0f
+                var downY = 0f
+                var downTime = 0L
+                var lastTapAt = 0L
+                setOnTouchListener { view, event ->
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            downX = event.x
+                            downY = event.y
+                            downTime = SystemClock.elapsedRealtime()
+                        }
+                        MotionEvent.ACTION_UP -> {
+                            val dx = event.x - downX
+                            val dy = event.y - downY
+                            val duration = SystemClock.elapsedRealtime() - downTime
+                            if (dx * dx + dy * dy <= 20f * 20f && duration <= 500L) {
+                                val now = SystemClock.elapsedRealtime()
+                                if (now - lastTapAt > 250L) {
+                                    lastTapAt = now
+                                    val point = (view as MapView).projection.fromPixels(event.x.toInt(), event.y.toInt())
+                                    view.performClick()
+                                    latestOnMapClick(Coordinate(point.latitude, point.longitude))
+                                }
+                            }
+                        }
                     }
-
-                    override fun longPressHelper(point: OsmGeoPoint?): Boolean = false
-                }))
+                    false
+                }
                 overlays.add(CopyrightOverlay(context))
                 onResume()
             }
@@ -1047,40 +1096,27 @@ fun MapV4(
     var scheduledLabel by remember { mutableStateOf("") }
     var showSave by remember { mutableStateOf(false) }
     var saveName by remember { mutableStateOf("") }
+    var saveError by remember { mutableStateOf<String?>(null) }
+    var savingFavorite by remember { mutableStateOf(false) }
     var showConfirm by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
     var resultMsg by remember { mutableStateOf<String?>(null) }
-    val hasLocationPermission =
-        ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) ==
-                PackageManager.PERMISSION_GRANTED ||
-                ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_COARSE_LOCATION) ==
-                PackageManager.PERMISSION_GRANTED
-    val permLauncher =
-        rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { perms ->
-            if (perms[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-                perms[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-            ) {
-                scope.launch {
-                    try {
-                        val loc = fused.getCurrentLocation(
-                            Priority.PRIORITY_HIGH_ACCURACY,
-                            CancellationTokenSource().token
-                        ).await() ?: fused.lastLocation.await()
-                        loc?.let {
-                            if (pickup == null) {
-                                val ll = Coordinate(it.latitude, it.longitude)
-                                pickup = ll
-                                pickupAddr = geocode(ctx, ll)
-                                mapCenter = ll
-                                mapZoom = 16f
-                            }
-                        }
-                    } catch (_: Exception) {
-                    }
-                }
-            }
-        }
-    LaunchedEffect(Unit) {
+    var hasLocationPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                    PackageManager.PERMISSION_GRANTED ||
+                    ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+                    PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        hasLocationPermission = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        // LaunchedEffect(hasLocationPermission) below performs the actual location lookup.
+    }
+    fun loadCurrentLocation() {
         if (!hasLocationPermission) {
             permLauncher.launch(
                 arrayOf(
@@ -1088,6 +1124,41 @@ fun MapV4(
                     Manifest.permission.ACCESS_COARSE_LOCATION
                 )
             )
+            return
+        }
+        scope.launch {
+            try {
+                val loc = fused.getCurrentLocation(
+                    Priority.PRIORITY_HIGH_ACCURACY,
+                    CancellationTokenSource().token
+                ).await() ?: fused.lastLocation.await()
+                loc?.let {
+                    val point = Coordinate(it.latitude, it.longitude)
+                    pickup = point
+                    pickupAddr = "جاري تحديد العنوان..."
+                    selectingPickup = false
+                    mapCenter = point
+                    mapZoom = 16f
+                    pickupAddr = geocode(ctx, point)
+                } ?: run {
+                    resultMsg = "تعذر الحصول على موقعك. شغّل GPS وحاول مرة أخرى."
+                }
+            } catch (e: Exception) {
+                resultMsg = "تعذر تحديد موقعك الآن. تأكد من تشغيل GPS ومنح التطبيق إذن الموقع."
+            }
+        }
+    }
+
+    LaunchedEffect(hasLocationPermission) {
+        if (!hasLocationPermission) {
+            permLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        } else if (pickup == null) {
+            loadCurrentLocation()
         }
     }
     val km =
@@ -1128,6 +1199,30 @@ fun MapV4(
             color = Color.DarkGray,
             fontSize = 10.sp
         )
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 12.dp, top = 120.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SmallFloatingActionButton(
+                onClick = {
+                    if (hasLocationPermission) loadCurrentLocation() else permLauncher.launch(
+                        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+                    )
+                },
+                containerColor = Color.White
+            ) { Text("📍") }
+            SmallFloatingActionButton(
+                onClick = { selectingPickup = true },
+                containerColor = if (selectingPickup) Color(0xFF0D7C3E) else Color.White
+            ) { Text("من", color = if (selectingPickup) Color.White else Color.Black, fontSize = 11.sp) }
+            SmallFloatingActionButton(
+                onClick = { selectingPickup = false },
+                containerColor = if (!selectingPickup) Color(0xFF0D7C3E) else Color.White
+            ) { Text("إلى", color = if (!selectingPickup) Color.White else Color.Black, fontSize = 11.sp) }
+        }
 
         // Top controls
         Column(
@@ -1243,7 +1338,7 @@ fun MapV4(
                     }
                     Spacer(Modifier.height(6.dp))
                     OutlinedButton(
-                        onClick = { showSave = true },
+                        onClick = { saveError = null; showSave = true },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("💾 احفظ كـ بيت") }
                 } else {
@@ -1336,16 +1431,20 @@ fun MapV4(
 
     if (showSave) {
         AlertDialog(
-            onDismissRequest = { showSave = false },
+            onDismissRequest = { if (!savingFavorite) showSave = false },
             title = { Text("احفظ مكانك") },
             text = {
                 Column {
                     OutlinedTextField(
                         value = saveName,
-                        onValueChange = { saveName = it },
+                        onValueChange = { saveName = it; saveError = null },
+                        enabled = !savingFavorite,
                         label = { Text("البيت / الشغل / مدرسة العيال") },
                         modifier = Modifier.fillMaxWidth()
                     )
+                    if (saveError != null) {
+                        Text(saveError!!, color = Color(0xFFB3261E), fontSize = 12.sp)
+                    }
                     Text(
                         "محفوظ على هذا الجهاز فقط",
                         fontSize = 10.sp,
@@ -1354,33 +1453,54 @@ fun MapV4(
                 }
             },
             confirmButton = {
-                Button(onClick = {
-                    if (saveName.isNotEmpty() && dropoff != null) {
+                Button(
+                    enabled = !savingFavorite,
+                    onClick = {
+                        val name = saveName.trim()
+                        val destination = dropoff
+                        if (name.isEmpty()) {
+                            saveError = "اكتب اسم المكان أولاً"
+                            return@Button
+                        }
+                        if (destination == null) {
+                            saveError = "حدد الوجهة على الخريطة أولاً"
+                            return@Button
+                        }
+                        savingFavorite = true
                         scope.launch {
+                            try {
                             saveFav(
                                 ctx,
                                 FavPlace(
-                                    saveName,
+                                    name,
                                     dropoffAddr,
-                                    dropoff!!.latitude,
-                                    dropoff!!.longitude
+                                    destination.latitude,
+                                    destination.longitude
                                 )
                             )
                             showSave = false
                             saveName = ""
+                            } catch (e: Exception) {
+                                saveError = e.localizedMessage ?: "تعذر حفظ المكان"
+                            } finally {
+                                savingFavorite = false
+                            }
                         }
                     }
-                }) { Text("حفظ") }
+                ) {
+                    if (savingFavorite) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Text("حفظ")
+                }
             },
             dismissButton = {
-                TextButton(onClick = { showSave = false }) { Text("إلغاء") }
+                TextButton(onClick = { showSave = false }, enabled = !savingFavorite) { Text("إلغاء") }
             }
         )
     }
 }
 
 @Composable
-fun AccountV4(onRoleChanged: () -> Unit) {
+fun AccountV4(onRoleChanged: () -> Unit, onAdminLogin: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf("") }
@@ -1506,6 +1626,11 @@ fun AccountV4(onRoleChanged: () -> Unit) {
             modifier = Modifier.fillMaxWidth().height(52.dp),
             shape = RoundedCornerShape(14.dp)
         ) { Text("تغيير الدور (راكب / سائق)") }
+
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = onAdminLogin, modifier = Modifier.fillMaxWidth()) {
+            Text("دخول المشرف")
+        }
     }
 }
 

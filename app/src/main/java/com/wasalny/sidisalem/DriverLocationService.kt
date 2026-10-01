@@ -13,15 +13,16 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationResult
-import com.google.firebase.firestore.FieldValue
+import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.FirebaseFunctionsException
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.SetOptions
-import com.firebase.geofire.GeoFireUtils
-import com.firebase.geofire.GeoLocation
 
 class DriverLocationService : Service() {
     private val fused by lazy { LocationServices.getFusedLocationProviderClient(this) }
     private val db by lazy { FirebaseFirestore.getInstance() }
+    private val functions by lazy { FirebaseFunctions.getInstance("us-central1") }
     private var callback: LocationCallback? = null
 
     override fun onCreate() {
@@ -32,13 +33,12 @@ class DriverLocationService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val uid = intent?.getStringExtra(EXTRA_UID)
-        val name = intent?.getStringExtra(EXTRA_NAME)
         if (uid.isNullOrBlank()) { stopSelf(); return START_NOT_STICKY }
-        startLocationUpdates(uid, name.orEmpty())
+        startLocationUpdates(uid)
         return START_NOT_STICKY
     }
 
-    private fun startLocationUpdates(uid: String, name: String) {
+    private fun startLocationUpdates(uid: String) {
         callback?.let { fused.removeLocationUpdates(it) }
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 10_000L)
             .setMinUpdateIntervalMillis(5_000L)
@@ -48,15 +48,13 @@ class DriverLocationService : Service() {
             override fun onLocationResult(result: LocationResult) {
                 val location = result.lastLocation ?: return
                 if (location.accuracy > 100f) return
-                db.collection("drivers").document(uid).update(
-                    mapOf(
-                        "displayName" to name,
-                        "lat" to location.latitude,
-                        "lon" to location.longitude,
-                        "geohash" to GeoFireUtils.getGeoHashForLocation(GeoLocation(location.latitude, location.longitude)),
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                )
+                functions.getHttpsCallable("heartbeatDriver").call(
+                    mapOf("lat" to location.latitude, "lon" to location.longitude)
+                ).addOnFailureListener { error ->
+                    val expired = error is FirebaseFunctionsException &&
+                        error.code == FirebaseFunctionsException.Code.FAILED_PRECONDITION
+                    if (expired) stopSelf()
+                }
                 db.collection("rides")
                     .whereEqualTo("selectedDriverId", uid)
                     .whereIn("status", ACTIVE_RIDE_STATUSES)

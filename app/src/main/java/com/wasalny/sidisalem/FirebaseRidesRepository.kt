@@ -30,6 +30,7 @@ data class RideRecord(
     val toLon: Double,
     val distanceKm: Double,
     val status: String,
+    val bookingType: String = "now",
     val searchRadiusMeters: Int,
     val selectedDriverId: String? = null,
     val selectedPrice: Int? = null,
@@ -322,11 +323,16 @@ class FirebaseRidesRepository(
         bookingType: String = "now",
         scheduledAt: Long? = null
     ): String {
-        require(distanceKm > 0.0 && distanceKm <= 50.0) { "مسافة الرحلة غير صالحة" }
+        require(distanceKm.isFinite() && distanceKm > 0.0 && distanceKm <= 50.0) { "مسافة الرحلة غير صالحة" }
+        require(from.latitude.isFinite() && from.longitude.isFinite() && to.latitude.isFinite() && to.longitude.isFinite()) { "إحداثيات الرحلة غير صالحة" }
+        require(from.latitude in -90.0..90.0 && to.latitude in -90.0..90.0) { "خط عرض غير صالح" }
+        require(from.longitude in -180.0..180.0 && to.longitude in -180.0..180.0) { "خط طول غير صالح" }
+        require(bookingType == "now" || bookingType == "school") { "نوع الحجز غير صالح" }
         assertCustomerNotBanned(customerId)
         val rideRef = rides.document()
         val isScheduled = bookingType == "school" && scheduledAt != null && scheduledAt > System.currentTimeMillis()
         if (bookingType == "school") require(scheduledAt != null && scheduledAt > System.currentTimeMillis() + 5 * 60_000) { "موعد الحجز يجب أن يكون بعد 5 دقائق على الأقل" }
+        if (bookingType == "now") require(scheduledAt == null) { "الرحلة الفورية لا تقبل موعدًا مسبقًا" }
         rideRef.set(mapOf(
             "customerId" to customerId, "customerName" to customerName,
             "fromAddress" to fromAddress, "toAddress" to toAddress,
@@ -711,6 +717,7 @@ class FirebaseRidesRepository(
             toLat = getDouble("toLat") ?: 0.0, toLon = getDouble("toLon") ?: 0.0,
             distanceKm = getDouble("distanceKm") ?: 0.0,
             status = getString("status") ?: "searching",
+            bookingType = getString("bookingType") ?: "now",
             searchRadiusMeters = (getLong("searchRadiusMeters") ?: 500L).toInt(),
             selectedDriverId = getString("selectedDriverId"),
             selectedPrice = (getLong("selectedPrice"))?.toInt(),

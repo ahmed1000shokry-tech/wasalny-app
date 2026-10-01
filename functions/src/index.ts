@@ -64,6 +64,80 @@ async function nearbyDrivers(lat: number, lon: number, radius: number) {
   return [...result.values()];
 }
 
+
+async function allAvailableDrivers() {
+  const snap = await db.collection("drivers")
+    .where("approved", "==", true)
+    .where("available", "==", true)
+    .get();
+  return snap.docs.filter(doc => {
+    const d = doc.data();
+    const expiry = d.subscriptionExpiresAt?.toMillis?.()
+      ?? (typeof d.subscriptionExpiresAt === "number" ? d.subscriptionExpiresAt : 0);
+    const updated = d.updatedAt?.toMillis?.() ?? 0;
+    return expiry > Date.now() && Date.now() - updated <= 45000;
+  });
+}
+
+
+async function commitWrites(writes: Array<{ ref: FirebaseFirestore.DocumentReference; data: FirebaseFirestore.DocumentData }>) {
+  // Firestore batches are limited to 500 writes. Keep headroom for future changes.
+  const chunkSize = 450;
+  for (let i = 0; i < writes.length; i += chunkSize) {
+    const batch = db.batch();
+    for (const write of writes.slice(i, i + chunkSize)) {
+      batch.set(write.ref, write.data);
+    }
+    await batch.commit();
+  }
+}
+
+async function broadcastScheduledRide(uid: string, rideId: string, current: FirebaseFirestore.DocumentData, invited: Set<string>) {
+  const candidates = await allAvailableDrivers();
+  const writes: Array<{ ref: FirebaseFirestore.DocumentReference; data: FirebaseFirestore.DocumentData }> = [];
+  let added = 0;
+  for (const driver of candidates) {
+    if (invited.has(driver.id)) continue;
+    invited.add(driver.id);
+    added++;
+    writes.push({
+      ref: driver.ref.collection("requests").doc(rideId),
+      data: {
+        rideId, customerId: uid, fromAddress: current.fromAddress, toAddress: current.toAddress,
+        fromLat: current.fromLat, fromLon: current.fromLon, distanceKm: current.distanceKm,
+        femaleMode: current.femaleMode === true, withLuggage: current.withLuggage === true,
+        radiusMeters: 0, status: "searching", createdAt: FieldValue.serverTimestamp()
+      }
+    });
+  }
+  if (added > 0) await commitWrites(writes);
+  await db.collection("rides").doc(rideId).update({
+    invitedDriverIds: [...invited], searchRadiusMeters: 0, searchStage: 0, updatedAt: FieldValue.serverTimestamp()
+  });
+  const until = Date.now() + waitMs;
+  while (Date.now() < until) {
+    const latest = (await db.collection("rides").doc(rideId).get()).data();
+    if (!latest || latest.status !== "searching") return latest?.status ?? "closed";
+    const offers = await db.collection("rides").doc(rideId).collection("offers").where("status", "==", "pending").limit(1).get();
+    if (!offers.empty) {
+      await db.collection("rides").doc(rideId).update({ status: "offered", searchWorkerActive: false, updatedAt: FieldValue.serverTimestamp() });
+      return "offered";
+    }
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  const final = await db.runTransaction(async tx => {
+    const ref = db.collection("rides").doc(rideId);
+    const snap = await tx.get(ref);
+    if (!snap.exists) return "closed";
+    if (snap.get("status") !== "searching") return String(snap.get("status") ?? "closed");
+    const offers = await tx.get(ref.collection("offers").where("status", "==", "pending").limit(1));
+    const status = offers.empty ? "no_drivers" : "offered";
+    tx.update(ref, { status, searchWorkerActive: false, updatedAt: FieldValue.serverTimestamp() });
+    return status;
+  });
+  return final;
+}
+
 async function performRideSearch(uid: string, rideId: string) {
   const rideRef = db.collection("rides").doc(rideId);
   const rideSnap = await rideRef.get();
@@ -84,24 +158,37 @@ async function performRideSearch(uid: string, rideId: string) {
   if (!lock) return { status: (await rideRef.get()).data()?.status ?? "searching" };
 
   const invited = new Set<string>(Array.isArray(ride.invitedDriverIds) ? ride.invitedDriverIds : []);
+  if (ride.bookingType === "school") {
+    const current = (await rideRef.get()).data();
+    if (!current || current.status !== "searching") {
+      await rideRef.update({ searchWorkerActive: false, updatedAt: FieldValue.serverTimestamp() });
+      return { status: current?.status ?? "closed" };
+    }
+    const status = await broadcastScheduledRide(uid, rideId, current, invited);
+    return { status };
+  }
   for (let stage = 0; stage < radii.length; stage++) {
     const current = (await rideRef.get()).data();
     if (!current || current.status !== "searching") { await rideRef.update({ searchWorkerActive: false }); return { status: current?.status ?? "closed" }; }
     const radius = radii[stage];
     await rideRef.update({ searchRadiusMeters: radius, searchStage: stage, updatedAt: FieldValue.serverTimestamp() });
     const candidates = await nearbyDrivers(current.fromLat, current.fromLon, radius);
-    const batch = db.batch(); let added = 0;
+    const writes: Array<{ ref: FirebaseFirestore.DocumentReference; data: FirebaseFirestore.DocumentData }> = [];
+    let added = 0;
     for (const driver of candidates) {
       if (invited.has(driver.id)) continue;
       invited.add(driver.id); added++;
-      batch.set(driver.ref.collection("requests").doc(rideId), {
-        rideId, customerId: uid, fromAddress: current.fromAddress, toAddress: current.toAddress,
-        fromLat: current.fromLat, fromLon: current.fromLon, distanceKm: current.distanceKm,
-        femaleMode: current.femaleMode === true, withLuggage: current.withLuggage === true,
-        radiusMeters: radius, status: "searching", createdAt: FieldValue.serverTimestamp()
+      writes.push({
+        ref: driver.ref.collection("requests").doc(rideId),
+        data: {
+          rideId, customerId: uid, fromAddress: current.fromAddress, toAddress: current.toAddress,
+          fromLat: current.fromLat, fromLon: current.fromLon, distanceKm: current.distanceKm,
+          femaleMode: current.femaleMode === true, withLuggage: current.withLuggage === true,
+          radiusMeters: radius, status: "searching", createdAt: FieldValue.serverTimestamp()
+        }
       });
     }
-    if (added) await batch.commit();
+    if (added) await commitWrites(writes);
     await rideRef.update({ invitedDriverIds: [...invited], updatedAt: FieldValue.serverTimestamp() });
     const until = Date.now() + waitMs;
     while (Date.now() < until) {
@@ -151,6 +238,18 @@ export const startRideSearch = onCall({ region: "us-central1", timeoutSeconds: 7
   if (!rideId) throw new HttpsError("invalid-argument", "rideId مطلوب");
   return performRideSearch(uid, rideId);
 });
+
+// Server-side safety net: an immediate ride still starts searching if the
+// customer's app closes immediately after creating it. The transaction lock
+// inside performRideSearch prevents duplicate search workers.
+export const autoStartImmediateRideSearch = onDocumentCreated(
+  { document: "rides/{rideId}", region: "us-central1", retry: true },
+  async event => {
+    const data = event.data?.data();
+    if (!data || data.bookingType !== "now" || data.status !== "searching") return;
+    await performRideSearch(String(data.customerId), event.params.rideId);
+  }
+);
 
 export const submitSubscriptionRequest = onCall({ region: "us-central1" }, async request => {
   const uid = requireAuth(request);
@@ -318,7 +417,7 @@ export const dispatchScheduledRides = onSchedule({ schedule: "every 1 minutes", 
     const claimed = await db.runTransaction(async tx => {
       const latest = await tx.get(doc.ref);
       if (latest.data()?.status !== "scheduled") return false;
-      tx.update(doc.ref, { status: "searching", updatedAt: FieldValue.serverTimestamp(), searchStage: 0, searchRadiusMeters: 500 });
+      tx.update(doc.ref, { status: "searching", updatedAt: FieldValue.serverTimestamp(), searchStage: 0, searchRadiusMeters: 0 });
       return true;
     });
     if (claimed) {

@@ -3,7 +3,6 @@
 build/
 **/build/
 local.properties
-app/google-services.json
 keystore.properties
 *.jks
 
@@ -11,6 +10,7 @@ keystore.properties
 .idea/
 *.iml
 
+# Firebase Android configuration is public client configuration; keep it versioned for CI/builds.
 # Local Firebase CLI state
 .firebase/
 

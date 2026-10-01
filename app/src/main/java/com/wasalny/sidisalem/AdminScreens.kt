@@ -100,7 +100,7 @@ fun AdminLoginScreen(onBack: () -> Unit, onSuccess: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("دخول المشرف", style = MaterialTheme.typography.headlineSmall)
-        Text("هذه الشاشة لا تظهر في التنقل العادي.", color = Color.Gray)
+        Text("دخول آمن للمشرف برقم الهاتف وكود SMS.", color = Color.Gray)
         Spacer(Modifier.size(16.dp))
         OutlinedTextField(
             value = phone,
