@@ -98,7 +98,8 @@ service cloud.firestore {
         && request.auth.uid == driverId
         && request.resource.data.keys().hasOnly([
           'uid', 'displayName', 'phone', 'licenseType', 'vehicleType',
-          'idCardImageUrl', 'vehicleImageUrl', 'approved', 'available',
+          'idCardImageUrl', 'vehicleImageUrl', 'profileImageUrl',
+          'idCardImagePath', 'vehicleImagePath', 'profileImagePath', 'approved', 'available',
           'lat', 'lon', 'geohash', 'createdAt', 'updatedAt'
         ])
         && request.resource.data.uid == driverId
@@ -108,6 +109,13 @@ service cloud.firestore {
         && request.resource.data.vehicleType is string
         && request.resource.data.idCardImageUrl is string
         && request.resource.data.vehicleImageUrl is string
+        && request.resource.data.profileImageUrl is string
+        && request.resource.data.idCardImagePath is string
+        && (request.resource.data.idCardImagePath == '' || request.resource.data.idCardImagePath == 'driverApplications/' + driverId + '/id-card')
+        && request.resource.data.vehicleImagePath is string
+        && (request.resource.data.vehicleImagePath == '' || request.resource.data.vehicleImagePath == 'driverApplications/' + driverId + '/vehicle')
+        && request.resource.data.profileImagePath is string
+        && (request.resource.data.profileImagePath == '' || request.resource.data.profileImagePath == 'driverApplications/' + driverId + '/profile')
         && request.resource.data.approved == false
         && request.resource.data.available == false
         && validCoordinates(request.resource.data.lat, request.resource.data.lon)
@@ -126,7 +134,8 @@ service cloud.firestore {
             && request.resource.data.uid == resource.data.uid
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
               'displayName', 'phone', 'licenseType', 'vehicleType', 'needsMoreData', 'adminMessage',
-              'idCardImageUrl', 'vehicleImageUrl', 'updatedAt'
+              'idCardImageUrl', 'vehicleImageUrl', 'idCardImagePath', 'vehicleImagePath',
+              'profileImagePath', 'updatedAt'
             ])
             && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['needsMoreData'])
               || request.resource.data.needsMoreData == false)
@@ -138,6 +147,12 @@ service cloud.firestore {
             && request.resource.data.vehicleType is string
             && request.resource.data.idCardImageUrl is string
             && request.resource.data.vehicleImageUrl is string
+            && request.resource.data.idCardImagePath is string
+            && (request.resource.data.idCardImagePath == '' || request.resource.data.idCardImagePath == 'driverApplications/' + driverId + '/id-card')
+            && request.resource.data.vehicleImagePath is string
+            && (request.resource.data.vehicleImagePath == '' || request.resource.data.vehicleImagePath == 'driverApplications/' + driverId + '/vehicle')
+            && request.resource.data.profileImagePath is string
+            && (request.resource.data.profileImagePath == '' || request.resource.data.profileImagePath == 'driverApplications/' + driverId + '/profile')
             && request.resource.data.updatedAt == request.time
           )
           ||

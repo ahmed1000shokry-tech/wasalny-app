@@ -77,6 +77,9 @@ data class DriverApplication(
     val idCardImageUrl: String = "",
     val vehicleImageUrl: String = "",
     val profileImageUrl: String = "",
+    val idCardImagePath: String = "",
+    val vehicleImagePath: String = "",
+    val profileImagePath: String = "",
     val approved: Boolean = false,
     val needsMoreData: Boolean = false,
     val adminMessage: String = "",
@@ -174,7 +177,8 @@ class FirebaseRidesRepository(
 
     suspend fun saveDriverApplication(
         uid: String, name: String, phone: String, licenseType: String, vehicleType: String,
-        idCardImageUrl: String = "", vehicleImageUrl: String = ""
+        idCardImageUrl: String = "", vehicleImageUrl: String = "",
+        idCardImagePath: String = "", vehicleImagePath: String = "", profileImagePath: String = ""
     ) {
         val ref = drivers.document(uid)
         val existing = ref.get().await()
@@ -182,6 +186,8 @@ class FirebaseRidesRepository(
             "uid" to uid, "displayName" to name, "phone" to phone,
             "licenseType" to licenseType, "vehicleType" to vehicleType,
             "idCardImageUrl" to idCardImageUrl, "vehicleImageUrl" to vehicleImageUrl,
+            "idCardImagePath" to idCardImagePath, "vehicleImagePath" to vehicleImagePath,
+            "profileImagePath" to profileImagePath,
             "approved" to (existing.getBoolean("approved") ?: false), "available" to false,
             "lat" to Config.LAT, "lon" to Config.LON,
             "geohash" to com.firebase.geofire.GeoFireUtils.getGeoHashForLocation(
@@ -189,6 +195,8 @@ class FirebaseRidesRepository(
             ),
             "updatedAt" to FieldValue.serverTimestamp()
         )
+        if (!existing.exists()) payload["profileImageUrl"] = ""
+        else existing.getString("profileImageUrl")?.let { payload["profileImageUrl"] = it }
         if (existing.getBoolean("needsMoreData") == true) {
             payload["needsMoreData"] = false
             payload["adminMessage"] = ""
@@ -199,6 +207,23 @@ class FirebaseRidesRepository(
 
     suspend fun getDriverApplication(uid: String): DriverApplication? =
         drivers.document(uid).get().await().takeIf { it.exists() }?.toDriverApplication()
+
+    suspend fun uploadDriverApplicationImage(uid: String, imageType: String, image: Uri, contentType: String): String {
+        require(imageType in listOf("id-card", "vehicle", "profile")) { "نوع الصورة غير صالح" }
+        require(contentType in listOf("image/jpeg", "image/png", "image/webp")) { "اختر صورة JPG أو PNG أو WEBP" }
+        check(FirebaseAuth.getInstance().currentUser?.uid == uid) { "غير مصرح" }
+        val driver = drivers.document(uid).get().await()
+        check(driver.exists() && driver.getBoolean("approved") != true) { "لا يمكن تعديل صور طلب سائق معتمد" }
+        val path = "driverApplications/$uid/$imageType"
+        storage.reference.child(path).putFile(
+            image,
+            StorageMetadata.Builder().setContentType(contentType).build()
+        ).await()
+        return path
+    }
+
+    suspend fun getDriverApplicationImage(path: String): ByteArray =
+        storage.reference.child(path).getBytes(5L * 1024 * 1024).await()
 
     fun listenDriverApplication(
         uid: String,
@@ -233,6 +258,9 @@ class FirebaseRidesRepository(
             idCardImageUrl = snapshot.getString("idCardImageUrl") ?: "",
             vehicleImageUrl = snapshot.getString("vehicleImageUrl") ?: "",
             profileImageUrl = snapshot.getString("profileImageUrl") ?: "",
+            idCardImagePath = snapshot.getString("idCardImagePath") ?: "",
+            vehicleImagePath = snapshot.getString("vehicleImagePath") ?: "",
+            profileImagePath = snapshot.getString("profileImagePath") ?: "",
             approved = snapshot.getBoolean("approved") == true,
             needsMoreData = snapshot.getBoolean("needsMoreData") == true,
             adminMessage = snapshot.getString("adminMessage") ?: "",
@@ -664,6 +692,9 @@ class FirebaseRidesRepository(
         idCardImageUrl = getString("idCardImageUrl") ?: "",
         vehicleImageUrl = getString("vehicleImageUrl") ?: "",
         profileImageUrl = getString("profileImageUrl") ?: "",
+        idCardImagePath = getString("idCardImagePath") ?: "",
+        vehicleImagePath = getString("vehicleImagePath") ?: "",
+        profileImagePath = getString("profileImagePath") ?: "",
         approved = getBoolean("approved") == true,
         needsMoreData = getBoolean("needsMoreData") == true,
         adminMessage = getString("adminMessage") ?: "",

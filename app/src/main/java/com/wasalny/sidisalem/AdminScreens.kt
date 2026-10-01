@@ -205,6 +205,7 @@ private fun AdminDriversTab() {
     var allDrivers by remember { mutableStateOf<List<DriverApplication>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var selectedDriver by remember { mutableStateOf<DriverCandidate?>(null) }
+    var imagePreview by remember { mutableStateOf<Pair<String, String>?>(null) }
     var savingUid by remember { mutableStateOf<String?>(null) }
     var driverDetails by remember { mutableStateOf<DriverApplication?>(null) }
 
@@ -279,6 +280,8 @@ private fun AdminDriversTab() {
     }
 
     selectedDriver?.let { driver ->
+        val requiredImagesUploaded = !driverDetails?.idCardImagePath.isNullOrBlank()
+            && !driverDetails?.vehicleImagePath.isNullOrBlank()
         AlertDialog(
             onDismissRequest = { if (savingUid == null) selectedDriver = null },
             title = { Text("اعتماد السائق") },
@@ -290,17 +293,33 @@ private fun AdminDriversTab() {
                     Text("رقم الهاتف: ${driverDetails?.phone ?: "غير متوفر"}", color = Color.Gray)
                     Text("نوع الرخصة: ${driverDetails?.licenseType ?: "غير محدد"}", color = Color.Gray)
                     Text("نوع المركبة: ${driverDetails?.vehicleType ?: "غير محدد"}", color = Color.Gray)
-                    if (!driverDetails?.idCardImageUrl.isNullOrBlank()) {
-                        Text("بطاقة: ${driverDetails!!.idCardImageUrl}", color = Color.Gray)
+                    if (!requiredImagesUploaded) {
+                        Text("لا يمكن اعتماد الطلب قبل رفع صورتي البطاقة والمركبة.", color = Color(0xFFB3261E))
                     }
-                    if (!driverDetails?.vehicleImageUrl.isNullOrBlank()) {
-                        Text("مركبة: ${driverDetails!!.vehicleImageUrl}", color = Color.Gray)
+                    if (!driverDetails?.idCardImagePath.isNullOrBlank()) {
+                        TextButton(onClick = { imagePreview = "صورة البطاقة" to driverDetails!!.idCardImagePath }) {
+                            Text("معاينة صورة البطاقة")
+                        }
+                    } else if (!driverDetails?.idCardImageUrl.isNullOrBlank()) {
+                        Text("بطاقة قديمة: رابط خارجي", color = Color.Gray)
+                    } else Text("لم تُرفق صورة بطاقة", color = Color.Gray)
+                    if (!driverDetails?.vehicleImagePath.isNullOrBlank()) {
+                        TextButton(onClick = { imagePreview = "صورة المركبة" to driverDetails!!.vehicleImagePath }) {
+                            Text("معاينة صورة المركبة")
+                        }
+                    } else if (!driverDetails?.vehicleImageUrl.isNullOrBlank()) {
+                        Text("مركبة قديمة: رابط خارجي", color = Color.Gray)
+                    } else Text("لم تُرفق صورة مركبة", color = Color.Gray)
+                    if (!driverDetails?.profileImagePath.isNullOrBlank()) {
+                        TextButton(onClick = { imagePreview = "الصورة الشخصية" to driverDetails!!.profileImagePath }) {
+                            Text("معاينة الصورة الشخصية")
+                        }
                     }
                 }
             },
             confirmButton = {
                 Button(
-                    enabled = savingUid == null,
+                    enabled = savingUid == null && requiredImagesUploaded,
                     onClick = {
                         savingUid = driver.uid
                         scope.launch {
@@ -323,6 +342,42 @@ private fun AdminDriversTab() {
                     Text("إلغاء")
                 }
             }
+        )
+    }
+
+    imagePreview?.let { (title, path) ->
+        var previewBitmap by remember(path) { mutableStateOf<ImageBitmap?>(null) }
+        var previewError by remember(path) { mutableStateOf(false) }
+        LaunchedEffect(path) {
+            runCatching {
+                val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    repository.getDriverApplicationImage(path)
+                }
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                    val sample = maxOf(1, maxOf(bounds.outWidth / 1000, bounds.outHeight / 1000))
+                    val options = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.asImageBitmap()
+                }
+            }.onSuccess { previewBitmap = it }
+                .onFailure { previewError = true }
+        }
+        AlertDialog(
+            onDismissRequest = { imagePreview = null },
+            title = { Text(title) },
+            text = {
+                when {
+                    previewBitmap != null -> Image(
+                        previewBitmap!!,
+                        contentDescription = title,
+                        modifier = Modifier.fillMaxWidth().height(320.dp)
+                    )
+                    previewError -> Text("تعذر تحميل الصورة. تحقق من اتصال Firebase وصلاحية المشرف.")
+                    else -> CircularProgressIndicator()
+                }
+            },
+            confirmButton = { TextButton(onClick = { imagePreview = null }) { Text("إغلاق") } }
         )
     }
 }

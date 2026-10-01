@@ -427,7 +427,7 @@ export const notifyRideEvents = onDocumentUpdated("rides/{rideId}", async event 
     accepted: "تم اختيار السائق لرحلتك",
     driver_arriving: "السائق بدأ التوجه إليك",
     driver_arrived: "السائق وصل إلى نقطة الركوب",
-    in_progress: "بدأت الرحلة",
+    in_progress: "بدأت الرحلة، رحلة سعيدة وآمنة بإذن الله",
     completed: "انتهت الرحلة. ننتظر تقييمك",
     cancelled: "تم إلغاء الرحلة",
     no_drivers: "لم يتم العثور على توكتوك متاح",

@@ -14,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -155,6 +156,30 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private val WasalnyBrandColors = lightColorScheme(
+    primary = Color(0xFF0D7C3E),
+    onPrimary = Color.White,
+    secondary = Color(0xFF114B3A),
+    onSecondary = Color.White,
+    tertiary = Color(0xFF00A45A),
+    background = Color(0xFFF6F9F6),
+    onBackground = Color(0xFF12211A),
+    surface = Color.White,
+    onSurface = Color(0xFF12211A),
+    error = Color(0xFFB3261E),
+    onError = Color.White,
+    outline = Color(0xFFDBE7DF)
+)
+
+@Composable
+private fun WasalnyAppTheme(content: @Composable () -> Unit) {
+    MaterialTheme(
+        colorScheme = WasalnyBrandColors,
+        typography = MaterialTheme.typography,
+        content = content
+    )
+}
+
 @Composable
 fun AppV4() {
     val navController = rememberNavController()
@@ -225,7 +250,7 @@ fun AppV4() {
         }
     }
 
-    MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFF0D7C3E))) {
+    WasalnyAppTheme {
         when {
             firebaseUser == null -> PhoneAuthScreen { firebaseUser = FirebaseAuth.getInstance().currentUser }
             !termsLoaded -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -306,53 +331,72 @@ fun WelcomeV4(onSelect: (String) -> Unit, onAdminRequest: () -> Unit) {
     Column(
         Modifier
             .fillMaxSize()
+            .background(Color(0xFFF5F8F5))
             .padding(24.dp)
             .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(
-            "🕌 وصلني",
-            fontSize = 36.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF0D7C3E),
-            modifier = Modifier.clickable {
-                secretTaps++
-                if (secretTaps >= 7) {
-                    secretTaps = 0
-                    onAdminRequest()
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(26.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White)
+        ) {
+            Column(
+                Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    "🕌 وصلني",
+                    fontSize = 38.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF0D7C3E),
+                    modifier = Modifier.clickable {
+                        secretTaps++
+                        if (secretTaps >= 7) {
+                            secretTaps = 0
+                            onAdminRequest()
+                        }
+                    }
+                )
+                Text("سيدي سالم - شبكة أمان", fontSize = 16.sp, color = Color(0xFF4D5C55), fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "تطبيق رحلات موثوق يربط الركاب مع السائقين بسرعة وأمان في نفس المنطقة.",
+                    fontSize = 12.sp,
+                    color = Color(0xFF64746A),
+                    textAlign = TextAlign.Center,
+                    lineHeight = 18.sp
+                )
+                Spacer(Modifier.height(20.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    RoleOptionCard(
+                        title = "أنا راكب",
+                        tag = "طلب رحلة الآن",
+                        icon = "🚕",
+                        onClick = {
+                            scope.launch {
+                                ctx.dataStore.edit { it[stringPreferencesKey("role")] = "customer" }
+                                onSelect("customer")
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    RoleOptionCard(
+                        title = "أنا سائق",
+                        tag = "استقبل الطلبات",
+                        icon = "🚖",
+                        onClick = { onSelect("driver") },
+                        modifier = Modifier.weight(1f)
+                    )
                 }
+                Spacer(Modifier.height(16.dp))
+                TextButton(onClick = { showTerms = true }) { Text("الشروط والأحكام", color = Color(0xFF0D7C3E), fontWeight = FontWeight.Bold) }
             }
-        )
-        Text("سيدي سالم - شبكة أمان", fontSize = 16.sp, color = Color.Gray)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "التوكتوك اللي جارك ضامنه - فكرة متعملتش",
-            fontSize = 11.sp,
-            color = Color.Gray,
-            textAlign = TextAlign.Center
-        )
-        Spacer(Modifier.height(24.dp))
-        Text("اختر نوع الحساب", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        Spacer(Modifier.height(18.dp))
-        Button(
-            onClick = {
-                scope.launch {
-                    ctx.dataStore.edit { it[stringPreferencesKey("role")] = "customer" }
-                    onSelect("customer")
-                }
-            },
-            modifier = Modifier.fillMaxWidth().height(56.dp)
-        ) { Text("أنا راكب") }
-        Spacer(Modifier.height(12.dp))
-        OutlinedButton(
-            onClick = {
-                onSelect("driver")
-            },
-            modifier = Modifier.fillMaxWidth().height(56.dp)
-        ) { Text("أنا سائق") }
-        Spacer(Modifier.height(12.dp))
-        TextButton(onClick = { showTerms = true }) { Text("الشروط والأحكام", color = Color.Gray) }
+        }
     }
     if (showTerms) {
         AlertDialog(
@@ -361,6 +405,32 @@ fun WelcomeV4(onSelect: (String) -> Unit, onAdminRequest: () -> Unit) {
             text = { TermsContent(Modifier.heightIn(max = 420.dp)) },
             confirmButton = { TextButton(onClick = { showTerms = false }) { Text("إغلاق") } }
         )
+    }
+}
+
+@Composable
+private fun RoleOptionCard(
+    title: String,
+    tag: String,
+    icon: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFF0F7F2)),
+        onClick = onClick
+    ) {
+        Column(
+            Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(icon, fontSize = 28.sp)
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(tag, fontSize = 11.sp, color = Color(0xFF586C62))
+        }
     }
 }
 
@@ -465,16 +535,25 @@ fun DriverRegistrationScreen(
     var phone by remember { mutableStateOf("") }
     var licenseType by remember { mutableStateOf("مرخص") }
     var vehicleType by remember { mutableStateOf("توك توك") }
-    var idCardImageUrl by remember { mutableStateOf("") }
-    var vehicleImageUrl by remember { mutableStateOf("") }
+    var idCardImage by remember { mutableStateOf<Uri?>(null) }
+    var vehicleImage by remember { mutableStateOf<Uri?>(null) }
+    var profileImage by remember { mutableStateOf<Uri?>(null) }
+    var existingApplication by remember { mutableStateOf<DriverApplication?>(null) }
     var isSubmitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+
+    val idCardPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { idCardImage = it }
+    val vehiclePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { vehicleImage = it }
+    val profilePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { profileImage = it }
 
     LaunchedEffect(Unit) {
         val savedName = getUserName(context)
         val savedPhone = getUserPhone(context)
         if (savedName != "مستخدم") name = savedName
         phone = FirebaseAuth.getInstance().currentUser?.phoneNumber ?: savedPhone
+        FirebaseAuth.getInstance().currentUser?.uid?.let { uid ->
+            existingApplication = runCatching { repository.getDriverApplication(uid) }.getOrNull()
+        }
     }
 
     Column(
@@ -516,18 +595,23 @@ fun DriverRegistrationScreen(
             modifier = Modifier.fillMaxWidth()
         )
 
-        OutlinedTextField(
-            value = idCardImageUrl,
-            onValueChange = { idCardImageUrl = it },
-            label = { Text("رابط صورة البطاقة (اختياري حالياً)") },
-            modifier = Modifier.fillMaxWidth()
+        DriverImagePickerField(
+            title = "صورة البطاقة (مطلوبة)",
+            selected = idCardImage != null,
+            saved = !existingApplication?.idCardImagePath.isNullOrBlank(),
+            onPick = { idCardPicker.launch("image/*") }
         )
-
-        OutlinedTextField(
-            value = vehicleImageUrl,
-            onValueChange = { vehicleImageUrl = it },
-            label = { Text("رابط صورة المركبة (اختياري حالياً)") },
-            modifier = Modifier.fillMaxWidth()
+        DriverImagePickerField(
+            title = "صورة المركبة (مطلوبة)",
+            selected = vehicleImage != null,
+            saved = !existingApplication?.vehicleImagePath.isNullOrBlank(),
+            onPick = { vehiclePicker.launch("image/*") }
+        )
+        DriverImagePickerField(
+            title = "صورة شخصية (اختيارية)",
+            selected = profileImage != null,
+            saved = !existingApplication?.profileImagePath.isNullOrBlank(),
+            onPick = { profilePicker.launch("image/*") }
         )
 
         if (error != null) {
@@ -553,15 +637,49 @@ fun DriverRegistrationScreen(
                             if (safePhone.isBlank() || name.trim().isBlank()) {
                                 throw IllegalStateException("الاسم ورقم الهاتف مطلوبان")
                             }
-                            repository.saveUserProfile(uid, "driver", name.trim(), safePhone)
+                            val currentApplication = repository.getDriverApplication(uid)
+                            if (idCardImage == null && currentApplication?.idCardImagePath.isNullOrBlank()) {
+                                throw IllegalStateException("ارفع صورة البطاقة لإرسال الطلب")
+                            }
+                            if (vehicleImage == null && currentApplication?.vehicleImagePath.isNullOrBlank()) {
+                                throw IllegalStateException("ارفع صورة المركبة لإرسال الطلب")
+                            }
+                            val safeName = name.trim()
+                            val safeLicenseType = licenseType.trim().ifBlank { "مرخص" }
+                            val safeVehicleType = vehicleType.trim().ifBlank { "توك توك" }
+                            repository.saveUserProfile(uid, "driver", safeName, safePhone)
                             repository.saveDriverApplication(
                                 uid = uid,
-                                name = name.trim(),
+                                name = safeName,
                                 phone = safePhone,
-                                licenseType = licenseType.trim().ifBlank { "مرخص" },
-                                vehicleType = vehicleType.trim().ifBlank { "توك توك" },
-                                idCardImageUrl = idCardImageUrl.trim(),
-                                vehicleImageUrl = vehicleImageUrl.trim()
+                                licenseType = safeLicenseType,
+                                vehicleType = safeVehicleType,
+                                idCardImageUrl = currentApplication?.idCardImageUrl.orEmpty(),
+                                vehicleImageUrl = currentApplication?.vehicleImageUrl.orEmpty(),
+                                idCardImagePath = currentApplication?.idCardImagePath.orEmpty(),
+                                vehicleImagePath = currentApplication?.vehicleImagePath.orEmpty(),
+                                profileImagePath = currentApplication?.profileImagePath.orEmpty()
+                            )
+                            val idCardPath = idCardImage?.let {
+                                repository.uploadDriverApplicationImage(uid, "id-card", it, context.contentResolver.getType(it).orEmpty())
+                            } ?: currentApplication?.idCardImagePath.orEmpty()
+                            val vehiclePath = vehicleImage?.let {
+                                repository.uploadDriverApplicationImage(uid, "vehicle", it, context.contentResolver.getType(it).orEmpty())
+                            } ?: currentApplication?.vehicleImagePath.orEmpty()
+                            val profilePath = profileImage?.let {
+                                repository.uploadDriverApplicationImage(uid, "profile", it, context.contentResolver.getType(it).orEmpty())
+                            } ?: currentApplication?.profileImagePath.orEmpty()
+                            repository.saveDriverApplication(
+                                uid = uid,
+                                name = safeName,
+                                phone = safePhone,
+                                licenseType = safeLicenseType,
+                                vehicleType = safeVehicleType,
+                                idCardImageUrl = currentApplication?.idCardImageUrl.orEmpty(),
+                                vehicleImageUrl = currentApplication?.vehicleImageUrl.orEmpty(),
+                                idCardImagePath = idCardPath,
+                                vehicleImagePath = vehiclePath,
+                                profileImagePath = profilePath
                             )
                             context.dataStore.edit {
                                 it[stringPreferencesKey("role")] = "driver"
@@ -583,6 +701,29 @@ fun DriverRegistrationScreen(
                 else Text("تسجيل الطلب")
             }
         }
+    }
+}
+
+@Composable
+private fun DriverImagePickerField(title: String, selected: Boolean, saved: Boolean, onPick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.Medium)
+            Text(
+                when {
+                    selected -> "تم اختيار صورة جديدة"
+                    saved -> "صورة محفوظة مع الطلب"
+                    else -> "لم تُرفق صورة"
+                },
+                color = Color.Gray,
+                fontSize = 12.sp
+            )
+        }
+        OutlinedButton(onClick = onPick) { Text(if (selected || saved) "تغيير" else "اختيار") }
     }
 }
 
@@ -636,36 +777,46 @@ fun HomeV4(nav: NavController, role: String) {
     }
 
     LazyColumn(
-        Modifier.fillMaxSize().padding(16.dp),
+        Modifier.fillMaxSize().background(Color(0xFFF6F9F6)).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text("أهلاً 👋", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Text(
-                "📍 سيدي سالم - نطاق الخدمة 5 كم",
-                fontSize = 11.sp,
-                color = Color(0xFF0D7C3E)
-            )
-            Spacer(Modifier.height(14.dp))
-            Button(
-                enabled = customerStats?.isBanned != true,
-                onClick = { nav.navigate("map") },
-                modifier = Modifier.fillMaxWidth().height(58.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0D7C3E))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0D7C3E))
             ) {
-                Icon(Icons.Default.DirectionsCar, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("اطلب رحلة دلوقت", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Column(Modifier.padding(18.dp)) {
+                    Text("أهلاً 👋", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text(
+                        "سيدي سالم - رحلاتك داخل 5 كم فقط",
+                        fontSize = 12.sp,
+                        color = Color(0xFFE6F7ED)
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Button(
+                        enabled = customerStats?.isBanned != true,
+                        onClick = { nav.navigate("map") },
+                        modifier = Modifier.fillMaxWidth().height(58.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White)
+                    ) {
+                        Icon(Icons.Default.DirectionsCar, contentDescription = null, tint = Color(0xFF0D7C3E))
+                        Spacer(Modifier.width(8.dp))
+                        Text("اطلب رحلة دلوقت", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0D7C3E))
+                    }
+                }
             }
             if (customerStats?.isBanned == true) {
+                Spacer(Modifier.height(8.dp))
                 Text(
                     "طلبات الرحلات موقوفة مؤقتًا حتى ${java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale("ar"))
                         .format(java.util.Date(customerStats!!.banUntil!!))}",
-                    color = Color(0xFFB3261E)
+                    color = Color(0xFFB3261E),
+                    fontWeight = FontWeight.SemiBold
                 )
             }
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(12.dp))
             Text("أو اختار وجهة محفوظة", fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
         if (favs.isEmpty()) {
@@ -724,17 +875,29 @@ fun HomeV4(nav: NavController, role: String) {
 
 @Composable
 fun DriverHomeV4(nav: NavController) {
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("🚖 وضع السائق", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        Text("سيدي سالم - شبكة أمان", fontSize = 12.sp, color = Color.Gray)
-        Spacer(Modifier.height(16.dp))
-        Text("طلبات الرحلات", fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(8.dp))
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF6F9F6))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF114B3A))
+        ) {
+            Column(Modifier.padding(18.dp)) {
+                Text("🚖 وضع السائق", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text("سيدي سالم - شبكة أمان", fontSize = 12.sp, color = Color(0xFFE6F7ED))
+            }
+        }
+        Text("التحكم السريع", fontWeight = FontWeight.Bold)
         Button(
             onClick = { nav.navigate("rides") },
-            modifier = Modifier.fillMaxWidth().height(52.dp)
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0D7C3E))
         ) { Text("عرض الطلبات القريبة") }
-        Spacer(Modifier.height(8.dp))
         OutlinedButton(
             onClick = { nav.navigate("map") },
             modifier = Modifier.fillMaxWidth()
@@ -1197,32 +1360,56 @@ fun AccountV4(onAdminRequest: () -> Unit, onRoleChanged: () -> Unit) {
     var phone by remember { mutableStateOf("") }
     var saved by remember { mutableStateOf(false) }
     var secretTaps by remember { mutableIntStateOf(0) }
+    var role by remember { mutableStateOf("customer") }
+    var subscription by remember { mutableStateOf<DriverSubscription?>(null) }
 
     LaunchedEffect(Unit) {
+        role = ctx.dataStore.data.first()[stringPreferencesKey("role")] ?: "customer"
         name = getUserName(ctx)
         phone = FirebaseAuth.getInstance().currentUser?.phoneNumber ?: getUserPhone(ctx)
         if (name == "مستخدم") name = ""
+        if (role == "driver") {
+            val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return@LaunchedEffect
+            subscription = runCatching { FirebaseRidesRepository().getDriverSubscription(uid) }.getOrNull()
+        }
     }
 
     Column(
         Modifier
             .fillMaxSize()
+            .background(Color(0xFFF6F9F6))
             .padding(16.dp)
             .verticalScroll(rememberScrollState())
     ) {
-        Text(
-            "🛡️ أماني وحسابي",
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.clickable {
-                secretTaps++
-                if (secretTaps >= 7) {
-                    secretTaps = 0
-                    onAdminRequest()
-                }
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0D7C3E))
+        ) {
+            Column(Modifier.padding(18.dp)) {
+                Text(
+                    "🛡️ أماني وحسابي",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    modifier = Modifier.clickable {
+                        secretTaps++
+                        if (secretTaps >= 7) {
+                            secretTaps = 0
+                            onAdminRequest()
+                        }
+                    }
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = if (role == "driver") "وضع السائق" else "وضع الراكب",
+                    color = Color(0xFFE9F7EE),
+                    fontWeight = FontWeight.Medium
+                )
             }
-        )
-        Spacer(Modifier.height(12.dp))
+        }
+
+        Spacer(Modifier.height(16.dp))
         OutlinedTextField(
             value = name,
             onValueChange = { name = it },
@@ -1248,16 +1435,43 @@ fun AccountV4(onAdminRequest: () -> Unit, onRoleChanged: () -> Unit) {
                     saved = true
                 }
             },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0D7C3E))
         ) { Text("حفظ البيانات") }
         if (saved) {
             Text("✅ تم الحفظ", color = Color(0xFF0D7C3E), fontSize = 12.sp)
         }
+
+        if (role == "driver") {
+            Spacer(Modifier.height(16.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("اشتراك السائق", fontWeight = FontWeight.Bold)
+                    val planText = when (subscription?.plan) {
+                        "month" -> "اشتراك شهري"
+                        else -> "غير مفعل"
+                    }
+                    Text("الحالة: ${if (subscription?.active == true) "نشط" else "غير نشط"}")
+                    Text("الخطة: $planText")
+                    Text(
+                        text = if (subscription?.active == true && subscription?.expiresAt != null)
+                            "متبقي ${subscription!!.daysLeft} يوم"
+                        else "الاشتراك يحتاج مراجعة أو تجديد"
+                    )
+                }
+            }
+        }
+
         Spacer(Modifier.height(20.dp))
-        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))) {
+        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)), shape = RoundedCornerShape(18.dp)) {
             Column(Modifier.padding(12.dp)) {
                 Text("رقم الطوارئ", fontWeight = FontWeight.Bold)
                 Text("الطوارئ: 122", fontSize = 13.sp)
+                Text("أرقام الدعم: 01069631050", fontSize = 12.sp, color = Color.Gray)
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -1270,7 +1484,8 @@ fun AccountV4(onAdminRequest: () -> Unit, onRoleChanged: () -> Unit) {
                     onRoleChanged()
                 }
             },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = RoundedCornerShape(14.dp)
         ) { Text("تغيير الدور (راكب / سائق)") }
     }
 }

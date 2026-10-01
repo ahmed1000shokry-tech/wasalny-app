@@ -24,5 +24,22 @@ service firebase.storage {
         && !firestore.exists(/databases/(default)/documents/subscriptionRequests/$(requestId));
       allow list, update: if false;
     }
+
+    match /driverApplications/{driverId}/{imageType} {
+      function ownsPendingApplication() {
+        let driverPath = /databases/(default)/documents/drivers/$(driverId);
+        return signedIn()
+          && request.auth.uid == driverId
+          && firestore.get(driverPath).data.approved == false;
+      }
+
+      allow create, update: if ownsPendingApplication()
+        && imageType in ['id-card', 'vehicle', 'profile']
+        && request.resource.size > 0
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow get: if signedIn() && (request.auth.uid == driverId || isAdmin());
+      allow list, delete: if false;
+    }
   }
 }

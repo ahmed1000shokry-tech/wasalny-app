@@ -11,7 +11,7 @@ firebase login
 
 ## 2) من مجلد المشروع
 
-فعّل Firebase Storage وأنشئ bucket للمشروع `wasalny-app-f5dbb` من Firebase Console قبل رفع إثبات التحويل. تحقق أن `app/google-services.json` يشير إلى المشروع نفسه.
+فعّل Firebase Storage وأنشئ bucket للمشروع `wasalny-app-f5dbb` من Firebase Console قبل رفع صور طلب السائق أو إثبات التحويل. صور البطاقة والمركبة والشخصية (اختيارية) وإثبات التحويل تقبل JPG/PNG/WEBP حتى 5 ميجابايت، وقراءتها مقيدة بالسائق صاحبها والمشرف. تحقق أن `app/google-services.json` يشير إلى المشروع نفسه.
 
 ```bash
 firebase use wasalny-app-f5dbb
@@ -35,3 +35,5 @@ firebase deploy --only firestore:rules,firestore:indexes,storage,functions
 ## مهم
 
 Cloud Functions وFirebase Storage تحتاج إعداد Billing مناسبًا وفق مشروع Firebase. ضع Budget Alert، وحدد سياسة الاحتفاظ بإيصالات التحويل، واختبر الرفع والقبول والرفض بحسابات تجريبية قبل الإنتاج.
+
+الدفع الإلكتروني غير مفعّل؛ إثباتات الاشتراك تُراجع يدويًا. لا توجد إشعارات دورية أثناء الرحلة؛ الإشعار الحالي يرسل تحديثًا عند بدء الرحلة فقط.
