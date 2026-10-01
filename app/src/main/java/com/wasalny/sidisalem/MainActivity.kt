@@ -1089,15 +1089,15 @@ fun MapV4(
             mapCenter = mapCenter,
             mapZoom = mapZoom,
             onMapClick = { point ->
-                scope.launch {
-                    if (selectingPickup) {
-                        pickup = point
-                        pickupAddr = geocode(ctx, point)
-                        selectingPickup = false
-                    } else {
-                        dropoff = point
-                        dropoffAddr = geocode(ctx, point)
-                    }
+                if (selectingPickup) {
+                    pickup = point
+                    pickupAddr = "جاري تحديد العنوان..."
+                    selectingPickup = false
+                    scope.launch { pickupAddr = geocode(ctx, point) }
+                } else {
+                    dropoff = point
+                    dropoffAddr = "جاري تحديد العنوان..."
+                    scope.launch { dropoffAddr = geocode(ctx, point) }
                 }
             }
         )
