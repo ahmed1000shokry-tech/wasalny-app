@@ -1142,6 +1142,13 @@ fun MapV4(
                             label = { Text("👩 وضع الستات", fontSize = 10.sp) }
                         )
                     }
+                    Text(
+                        if (selectingPickup) "اضغط على الخريطة لاختيار نقطة البداية"
+                        else "اضغط على الخريطة لاختيار الوجهة",
+                        fontSize = 11.sp,
+                        color = Color(0xFF0D7C3E),
+                        fontWeight = FontWeight.Medium
+                    )
                     if (pickupAddr.isNotEmpty())
                         Text("من: $pickupAddr", fontSize = 10.sp, maxLines = 1)
                     if (dropoffAddr.isNotEmpty())
