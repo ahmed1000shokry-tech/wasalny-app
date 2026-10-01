@@ -532,7 +532,7 @@ class FirebaseRidesRepository(
             val result = functions.getHttpsCallable("submitSubscriptionRequest").call(
                 mapOf("requestId" to requestRef.id, "proofPath" to proofPath, "note" to note.trim().take(300))
             ).await()
-            val amount = ((result.data as? Map<*, *>)?.get("amount") as? Number)?.toInt()
+            val amount = ((result.getData() as? Map<*, *>)?.get("amount") as? Number)?.toInt()
                 ?: error("تعذر تحديد مبلغ الاشتراك")
             val driverName = drivers.document(driverId).get().await().getString("displayName") ?: "سائق"
             return SubscriptionRequest(requestRef.id, driverId, driverName, amount, 1, proofPath, note.trim(), "pending")

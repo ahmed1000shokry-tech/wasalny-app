@@ -508,7 +508,7 @@ private fun DriverRideRequestsScreen(driverId: String) {
                                         rs.status == "completed" -> {
                                             Text("اكتملت الرحلة.", color = Color(0xFF0D7C3E))
                                             if (request.rideId !in ratedRideIds) {
-                                                Button(onClick = { ratingRide = rs; showDriverRating = true }, modifier = Modifier.fillMaxWidth()) {
+                                                Button(onClick = { ratingRide = rs }, modifier = Modifier.fillMaxWidth()) {
                                                     Text("قيّم الراكب")
                                                 }
                                             }
@@ -555,17 +555,15 @@ private fun DriverRideRequestsScreen(driverId: String) {
         )
     }
 
-    if (showDriverRating && ratingRide != null) {
-        val rideToRate = ratingRide!!
+    ratingRide?.let { rideToRate ->
         RatingDialog(
             title = "تقييم الراكب",
-            onDismiss = { showDriverRating = false },
+            onDismiss = { ratingRide = null },
             onSubmit = { stars, comment ->
                 scope.launch {
                     try {
                         repository.submitRating(rideToRate.id, driverId, stars, comment)
                         ratedRideIds = ratedRideIds + rideToRate.id
-                        showDriverRating = false
                         ratingRide = null
                     } catch (e: Exception) { error = e.localizedMessage ?: "تعذر إرسال التقييم" }
                 }
