@@ -198,8 +198,6 @@ fun AppV4(notificationRideId: String? = null) {
     val scope = rememberCoroutineScope()
     var firebaseUser by remember { mutableStateOf(FirebaseAuth.getInstance().currentUser) }
     var role by remember { mutableStateOf<String?>(null) }
-    var adminMode by remember { mutableStateOf(false) }
-    var showAdminLogin by remember { mutableStateOf(false) }
     var showDriverRegistration by remember { mutableStateOf(false) }
     var showCustomerProfile by remember { mutableStateOf(false) }
     var driverApproved by remember { mutableStateOf<Boolean?>(null) }
@@ -267,15 +265,13 @@ fun AppV4(notificationRideId: String? = null) {
         firebaseUser?.uid,
         termsAccepted,
         role,
-        adminMode,
-        showAdminLogin,
         showDriverRegistration,
         showCustomerProfile,
         driverApproved
     ) {
         val rideId = notificationRideId ?: return@LaunchedEffect
         if (rideId == openedNotificationRideId || firebaseUser == null || !termsAccepted || role == null ||
-            adminMode || showAdminLogin || showDriverRegistration || showCustomerProfile ||
+            showDriverRegistration || showCustomerProfile ||
             (role == "driver" && driverApproved == false)
         ) return@LaunchedEffect
 
@@ -298,13 +294,6 @@ fun AppV4(notificationRideId: String? = null) {
                     }
                 }
             })
-            adminMode -> AdminPanel {
-                FirebaseAuth.getInstance().signOut(); adminMode = false; role = null
-            }
-            showAdminLogin -> AdminLoginScreen(
-                onBack = { showAdminLogin = false },
-                onSuccess = { showAdminLogin = false; adminMode = true }
-            )
             showDriverRegistration -> DriverRegistrationScreen(
                 onBack = { showDriverRegistration = false },
                 onComplete = { selectedRole -> showDriverRegistration = false; role = selectedRole; driverAdminMessage = "" }
@@ -317,8 +306,7 @@ fun AppV4(notificationRideId: String? = null) {
                 onSelect = { r ->
                     if (r == "driver") showDriverRegistration = true
                     else showCustomerProfile = true
-                },
-                onAdminRequest = { showAdminLogin = true }
+                }
             )
             role == "driver" && driverApproved == false -> DriverPendingApprovalScreen(
                 phone = driverPhone,
@@ -353,7 +341,7 @@ fun AppV4(notificationRideId: String? = null) {
                     ) { entry ->
                         RidesV4(navController, role!!, entry.arguments?.getString("rideId"))
                     }
-                    composable("account") { AccountV4(onAdminRequest = { showAdminLogin = true }) { navController.navigate("home"); role = null } }
+                    composable("account") { AccountV4 { navController.navigate("home"); role = null } }
                     composable("manage_favs") { ManageFavsV4() }
                 }
             }
@@ -362,10 +350,9 @@ fun AppV4(notificationRideId: String? = null) {
 }
 
 @Composable
-fun WelcomeV4(onSelect: (String) -> Unit, onAdminRequest: () -> Unit) {
+fun WelcomeV4(onSelect: (String) -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var secretTaps by remember { mutableIntStateOf(0) }
     var showTerms by remember { mutableStateOf(false) }
     Column(
         Modifier
@@ -389,14 +376,7 @@ fun WelcomeV4(onSelect: (String) -> Unit, onAdminRequest: () -> Unit) {
                     "🕌 وصلني",
                     fontSize = 38.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF0D7C3E),
-                    modifier = Modifier.clickable {
-                        secretTaps++
-                        if (secretTaps >= 7) {
-                            secretTaps = 0
-                            onAdminRequest()
-                        }
-                    }
+                    color = Color(0xFF0D7C3E)
                 )
                 Text("سيدي سالم - شبكة أمان", fontSize = 16.sp, color = Color(0xFF4D5C55), fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(8.dp))
@@ -1400,13 +1380,12 @@ fun MapV4(
 }
 
 @Composable
-fun AccountV4(onAdminRequest: () -> Unit, onRoleChanged: () -> Unit) {
+fun AccountV4(onRoleChanged: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var saved by remember { mutableStateOf(false) }
-    var secretTaps by remember { mutableIntStateOf(0) }
     var role by remember { mutableStateOf("customer") }
     var subscription by remember { mutableStateOf<DriverSubscription?>(null) }
 
@@ -1438,14 +1417,7 @@ fun AccountV4(onAdminRequest: () -> Unit, onRoleChanged: () -> Unit) {
                     "🛡️ أماني وحسابي",
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    modifier = Modifier.clickable {
-                        secretTaps++
-                        if (secretTaps >= 7) {
-                            secretTaps = 0
-                            onAdminRequest()
-                        }
-                    }
+                    color = Color.White
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
