@@ -150,9 +150,20 @@ suspend fun getUserPhone(context: Context): String =
     context.dataStore.data.first()[stringPreferencesKey("user_phone")] ?: ""
 
 class MainActivity : ComponentActivity() {
+    private val notificationRideId = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { AppV4() }
+        notificationRideId.value = intent.getStringExtra("rideId")
+        intent.removeExtra("rideId")
+        setContent { AppV4(notificationRideId.value) }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        notificationRideId.value = intent.getStringExtra("rideId")
+        intent.removeExtra("rideId")
     }
 }
 
@@ -181,7 +192,7 @@ private fun WasalnyAppTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-fun AppV4() {
+fun AppV4(notificationRideId: String? = null) {
     val navController = rememberNavController()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -196,6 +207,7 @@ fun AppV4() {
     var driverAdminMessage by remember { mutableStateOf("") }
     var termsAccepted by remember { mutableStateOf(false) }
     var termsLoaded by remember { mutableStateOf(false) }
+    var openedNotificationRideId by remember { mutableStateOf<String?>(null) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     LaunchedEffect(firebaseUser?.uid) {
@@ -247,6 +259,29 @@ fun AppV4() {
             driverApproved = repository.getDriverApproval(uid) ?: false
             driverPhone = firebaseUser?.phoneNumber ?: getUserPhone(context)
             driverAdminMessage = repository.getDriverApplication(uid)?.adminMessage.orEmpty()
+        }
+    }
+
+    LaunchedEffect(
+        notificationRideId,
+        firebaseUser?.uid,
+        termsAccepted,
+        role,
+        adminMode,
+        showAdminLogin,
+        showDriverRegistration,
+        showCustomerProfile,
+        driverApproved
+    ) {
+        val rideId = notificationRideId ?: return@LaunchedEffect
+        if (rideId == openedNotificationRideId || firebaseUser == null || !termsAccepted || role == null ||
+            adminMode || showAdminLogin || showDriverRegistration || showCustomerProfile ||
+            (role == "driver" && driverApproved == false)
+        ) return@LaunchedEffect
+
+        openedNotificationRideId = rideId
+        navController.navigate("rides?rideId=${Uri.encode(rideId)}") {
+            launchSingleTop = true
         }
     }
 
@@ -311,7 +346,11 @@ fun AppV4() {
                         val destination = if (lat != null && lon != null) FavPlace("", address, lat, lon) else null
                         MapV4(role!!, destination) { rideId -> navController.navigate("rides?rideId=$rideId") }
                     }
-                    composable("rides?rideId={rideId}", arguments = listOf(navArgument("rideId") { type = NavType.StringType; nullable = true; defaultValue = null })) { entry ->
+                    composable("rides") { RidesV4(navController, role!!, null) }
+                    composable(
+                        route = "rides?rideId={rideId}",
+                        arguments = listOf(navArgument("rideId") { type = NavType.StringType; nullable = true; defaultValue = null })
+                    ) { entry ->
                         RidesV4(navController, role!!, entry.arguments?.getString("rideId"))
                     }
                     composable("account") { AccountV4(onAdminRequest = { showAdminLogin = true }) { navController.navigate("home"); role = null } }
