@@ -303,7 +303,7 @@ private fun DriverRideRequestsScreen(driverId: String) {
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         locationAllowed = result[Manifest.permission.ACCESS_FINE_LOCATION] == true || result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
     }
-    val proofPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { selectedProof = it }
+    val proofPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { selectedProof = it }
 
     LaunchedEffect(selectedProof) {
         proofPreview = null
@@ -419,7 +419,7 @@ private fun DriverRideRequestsScreen(driverId: String) {
                                 }.onFailure { error = it.localizedMessage ?: "تعذر تحديث حالة الاشتراك" }
                             }
                         }) { Text("تحديث حالة الاشتراك") }
-                        OutlinedButton(onClick = { proofPicker.launch("image/*") }, enabled = !subscriptionBusy) {
+                        OutlinedButton(onClick = { proofPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp")) }, enabled = !subscriptionBusy) {
                             Text(if (selectedProof == null) "اختيار صورة إثبات التحويل" else "تغيير صورة الإثبات")
                         }
                         if (selectedProof != null) Text("تم اختيار الصورة", color = Color(0xFF0D7C3E))

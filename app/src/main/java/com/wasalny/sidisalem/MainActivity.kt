@@ -561,9 +561,9 @@ fun DriverRegistrationScreen(
     var isSubmitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    val idCardPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { idCardImage = it }
-    val vehiclePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { vehicleImage = it }
-    val profilePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { profileImage = it }
+    val idCardPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { idCardImage = it }
+    val vehiclePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { vehicleImage = it }
+    val profilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { profileImage = it }
 
     LaunchedEffect(Unit) {
         val savedName = getUserName(context)
@@ -618,19 +618,19 @@ fun DriverRegistrationScreen(
             title = "صورة البطاقة (مطلوبة)",
             selected = idCardImage != null,
             saved = !existingApplication?.idCardImagePath.isNullOrBlank(),
-            onPick = { idCardPicker.launch("image/*") }
+            onPick = { idCardPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp")) }
         )
         DriverImagePickerField(
             title = "صورة المركبة (مطلوبة)",
             selected = vehicleImage != null,
             saved = !existingApplication?.vehicleImagePath.isNullOrBlank(),
-            onPick = { vehiclePicker.launch("image/*") }
+            onPick = { vehiclePicker.launch(arrayOf("image/jpeg", "image/png", "image/webp")) }
         )
         DriverImagePickerField(
             title = "صورة شخصية (اختيارية)",
             selected = profileImage != null,
             saved = !existingApplication?.profileImagePath.isNullOrBlank(),
-            onPick = { profilePicker.launch("image/*") }
+            onPick = { profilePicker.launch(arrayOf("image/jpeg", "image/png", "image/webp")) }
         )
 
         if (error != null) {
