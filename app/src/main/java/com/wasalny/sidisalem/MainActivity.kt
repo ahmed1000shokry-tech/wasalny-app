@@ -1048,12 +1048,13 @@ fun MapV4(
                             CancellationTokenSource().token
                         ).await() ?: fused.lastLocation.await()
                         loc?.let {
-                            val ll = Coordinate(it.latitude, it.longitude)
-                            pickup = ll
-                            pickupAddr = geocode(ctx, ll)
-                            selectingPickup = false
-                            mapCenter = ll
-                            mapZoom = 16f
+                            if (pickup == null) {
+                                val ll = Coordinate(it.latitude, it.longitude)
+                                pickup = ll
+                                pickupAddr = geocode(ctx, ll)
+                                mapCenter = ll
+                                mapZoom = 16f
+                            }
                         }
                     } catch (_: Exception) {
                     }
